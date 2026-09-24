@@ -149,6 +149,7 @@ export default function SyncScreen() {
   const notifiedTransfersRef = useRef(new Set())
 
   const connectionGenerationRef = useRef(0)
+  const disconnectGenerationRef = useRef(0)
 
   /* ============================================================
    * FILE AUTO SYNC REFS
@@ -175,6 +176,7 @@ export default function SyncScreen() {
   const incomingDownloadsRef = useRef(new Map())
   const reconnectTimerRef = useRef(null)
   const reconnectAttemptRef = useRef(0)
+  const disconnectHandledRef = useRef(false)
 
   /* ============================================================
    * LOAD TRUSTED PC
@@ -1197,6 +1199,35 @@ export default function SyncScreen() {
   )
 
   const scheduleAutoReconnect = useCallback(() => {
+  if (manualDisconnectRef.current) {
+    return
+  }
+
+  if (connectedDeviceRef.current) {
+    return
+  }
+
+  if (reconnectTimerRef.current) {
+    return
+  }
+
+  const attempt = reconnectAttemptRef.current + 1
+
+  reconnectAttemptRef.current = attempt
+
+  const delay = Math.min(
+    2000 + (attempt - 1) * 1000,
+    5000,
+  )
+
+  console.log("NETWORK AUTO RECONNECT SCHEDULED:", {
+    attempt,
+    delay,
+  })
+
+  reconnectTimerRef.current = setTimeout(async () => {
+    reconnectTimerRef.current = null
+
     if (manualDisconnectRef.current) {
       return
     }
@@ -1205,102 +1236,104 @@ export default function SyncScreen() {
       return
     }
 
-    // يوجد reconnect timer بالفعل
-    if (reconnectTimerRef.current) {
+    if (autoConnectAttemptRef.current) {
+      console.log(
+        "NETWORK AUTO RECONNECT SKIPPED: CONNECTION ATTEMPT ALREADY RUNNING",
+      )
+
       return
     }
 
-    const attempt = reconnectAttemptRef.current + 1
+    const savedPc = await getTrustedPc()
 
-    reconnectAttemptRef.current = attempt
+    if (!savedPc?.id) {
+      reconnectAttemptRef.current = 0
+      return
+    }
 
-    const delay = Math.min(2000 + (attempt - 1) * 1000, 5000)
-
-    console.log("NETWORK AUTO RECONNECT SCHEDULED:", {
-      attempt,
-      delay,
-    })
-
-    reconnectTimerRef.current = setTimeout(async () => {
-      reconnectTimerRef.current = null
-
-      if (manualDisconnectRef.current) {
-        return
-      }
-
-      if (connectedDeviceRef.current) {
-        return
-      }
-
-      // لا تبدأ محاولة جديدة أثناء وجود محاولة حالية
-      if (autoConnectAttemptRef.current) {
-        console.log(
-          "NETWORK AUTO RECONNECT SKIPPED: CONNECTION ATTEMPT ALREADY RUNNING",
-        )
-
-        return
-      }
-
-      const savedPc = await getTrustedPc()
-
-      if (!savedPc?.id) {
-        reconnectAttemptRef.current = 0
-        return
-      }
-
-      if (!savedPc.ip) {
-        console.log("NETWORK AUTO RECONNECT: NO IP -> DISCOVERY")
-
-        try {
-          startDiscovery()
-        } catch (error) {
-          console.error("RECONNECT DISCOVERY ERROR:", error)
-
-          scheduleAutoReconnect()
-        }
-
-        return
-      }
-
-      const websocketPort = Number(
-        savedPc.websocketPort || savedPc.port || DEFAULT_WEBSOCKET_PORT,
+    if (!savedPc.ip) {
+      console.log(
+        "NETWORK AUTO RECONNECT: NO IP -> DISCOVERY",
       )
 
       try {
-        autoConnectAttemptRef.current = true
+        startDiscovery()
+      } catch (error) {
+        console.error(
+          "RECONNECT DISCOVERY ERROR:",
+          error,
+        )
 
-        setAutoConnecting(true)
-        setConnectingId(savedPc.id)
-        setConnectionError(null)
+        scheduleAutoReconnect()
+      }
 
-        try {
-          AvocatoFlow.stopDiscovery()
-        } catch {}
+      return
+    }
 
-        setIsDiscovering(false)
+    const websocketPort = Number(
+      savedPc.websocketPort ||
+        savedPc.port ||
+        DEFAULT_WEBSOCKET_PORT,
+    )
 
-        console.log("NETWORK AUTO RECONNECT TRY:", {
+    try {
+      /*
+       * هذه محاولة اتصال جديدة.
+       * لذلك نسمح بمعالجة disconnect/error جديد.
+       */
+      disconnectHandledRef.current = false
+
+      autoConnectAttemptRef.current = true
+
+      setAutoConnecting(true)
+      setConnectingId(savedPc.id)
+      setConnectionError(null)
+
+      try {
+        AvocatoFlow.stopDiscovery()
+      } catch {}
+
+      setIsDiscovering(false)
+
+      console.log(
+        "NETWORK AUTO RECONNECT TRY:",
+        {
           attempt,
           id: savedPc.id,
           ip: savedPc.ip,
           websocketPort,
-        })
+        },
+      )
+      connectionGenerationRef.current += 1
 
-        AvocatoFlow.connect(savedPc.ip, websocketPort)
-      } catch (error) {
-        console.error("NETWORK AUTO RECONNECT ERROR:", error)
+disconnectGenerationRef.current =
+  connectionGenerationRef.current
 
-        autoConnectAttemptRef.current = false
+disconnectHandledRef.current = false
+      AvocatoFlow.connect(
+        savedPc.ip,
+        websocketPort,
+      )
+    } catch (error) {
+      console.error(
+        "NETWORK AUTO RECONNECT ERROR:",
+        error,
+      )
 
-        setConnectingId(null)
-        setAutoConnecting(false)
+      autoConnectAttemptRef.current = false
 
-        if (!manualDisconnectRef.current) {
-          scheduleAutoReconnect()
-        }
+      setConnectingId(null)
+      setAutoConnecting(false)
+
+      if (!manualDisconnectRef.current) {
+        scheduleAutoReconnect()
       }
-    }, delay)
-  }, [getTrustedPc, startDiscovery])
+    }
+  }, delay)
+}, [
+  getTrustedPc,
+  startDiscovery,
+])
   /* ============================================================
    * TRUSTED PC
    * ============================================================ */
@@ -2439,20 +2472,41 @@ export default function SyncScreen() {
    * ============================================================ */
 
   useEffect(() => {
-    if (!AvocatoFlow || typeof AvocatoFlow.addListener !== "function") {
-      console.error("AvocatoFlow.addListener is not available")
+  if (
+    !AvocatoFlow ||
+    typeof AvocatoFlow.addListener !== "function"
+  ) {
+    console.error(
+      "AvocatoFlow.addListener is not available",
+    )
 
-      return undefined
-    }
+    return undefined
+  }
 
-    const subscription = AvocatoFlow.addListener(
+  const subscription =
+    AvocatoFlow.addListener(
       "onConnectionStateChanged",
       async event => {
-        const connected = Boolean(event?.connected)
+        const connected = Boolean(
+          event?.connected,
+        )
 
+        /*
+         * ======================================================
+         * CONNECTED
+         * ======================================================
+         */
         if (connected) {
+          console.log(
+            "NETWORK CONNECTION ESTABLISHED",
+          )
+
+          disconnectHandledRef.current = false
+
           clearReconnectTimer()
+
           reconnectAttemptRef.current = 0
+
           setConnectingId(null)
 
           setAutoConnecting(false)
@@ -2465,16 +2519,21 @@ export default function SyncScreen() {
 
           const device =
             connectedDeviceRef.current ||
-            devices.find(item => item.id === connectingId) ||
+            devices.find(
+              item =>
+                item.id === connectingId,
+            ) ||
             trustedPc
 
           if (device?.id) {
-            connectedDeviceRef.current = device
+            connectedDeviceRef.current =
+              device
 
             setConnectedDevice(device)
           }
 
-          databaseAutoSyncStartedRef.current = false
+          databaseAutoSyncStartedRef.current =
+            false
 
           autoSyncStartedRef.current = false
 
@@ -2496,22 +2555,57 @@ export default function SyncScreen() {
           return
         }
 
-        /* ------------------------------------------------------
-         * Connection closed
-         * ------------------------------------------------------ */
+        /*
+         * ======================================================
+         * DISCONNECTED
+         * ======================================================
+         *
+         * onConnectionError قد يكون أرسل قبل هذه الحالة.
+         * لذلك لا نعالج نفس الانقطاع مرتين.
+         */
+        if (disconnectHandledRef.current) {
+          console.log(
+            "NETWORK DISCONNECT IGNORED: ALREADY HANDLED",
+          )
 
-        for (const [transferId, download] of incomingDownloadsRef.current) {
+          return
+        }
+
+        disconnectHandledRef.current = true
+
+        console.log(
+          "NETWORK CONNECTION LOST -> AUTO RECONNECT",
+        )
+
+        /*
+         * إيقاف أي downloads معلقة
+         */
+        for (
+          const [
+            transferId,
+            download,
+          ] of incomingDownloadsRef.current
+        ) {
           try {
-            if (typeof download.pauseAsync === "function") {
+            if (
+              typeof download.pauseAsync ===
+              "function"
+            ) {
               await download.pauseAsync()
             }
           } catch (_) {}
 
-          console.log("PAUSED DOWNLOAD AFTER CONNECTION CLOSED:", transferId)
+          console.log(
+            "PAUSED DOWNLOAD AFTER CONNECTION CLOSED:",
+            transferId,
+          )
         }
 
         incomingDownloadsRef.current.clear()
 
+        /*
+         * Connection state
+         */
         setConnectedDevice(null)
 
         connectedDeviceRef.current = null
@@ -2524,158 +2618,314 @@ export default function SyncScreen() {
 
         setIsSendingTest(false)
 
-        databaseSyncRequestRef.current = null
+        /*
+         * Database sync
+         */
+        databaseSyncRequestRef.current =
+          null
 
-        databaseSyncRunningRef.current = false
+        databaseSyncRunningRef.current =
+          false
 
         setDatabaseSyncing(false)
 
-        databaseAutoSyncStartedRef.current = false
+        databaseAutoSyncStartedRef.current =
+          false
 
+        /*
+         * File auto sync
+         */
         autoSyncStartedRef.current = false
 
         autoSyncQueueRef.current = []
 
         autoSyncCurrentRef.current = null
 
-        for (const [requestId, waiter] of autoSyncWaitersRef.current) {
+        for (
+          const [
+            requestId,
+            waiter,
+          ] of autoSyncWaitersRef.current
+        ) {
           try {
-            waiter.reject(new Error("CONNECTION_CLOSED"))
+            waiter.reject(
+              new Error(
+                "CONNECTION_CLOSED",
+              ),
+            )
           } catch (_) {}
         }
 
         autoSyncWaitersRef.current.clear()
 
-        autoConnectAttemptRef.current = false
+        autoConnectAttemptRef.current =
+          false
 
-        if (manualDisconnectRef.current) {
-          manualDisconnectRef.current = false
+        /*
+         * Manual disconnect:
+         * لا تعمل Auto Reconnect.
+         */
+        if (
+          manualDisconnectRef.current
+        ) {
+          manualDisconnectRef.current =
+            false
 
           clearReconnectTimer()
+
           reconnectAttemptRef.current = 0
 
           return
         }
 
-        console.log("NETWORK CONNECTION LOST -> AUTO RECONNECT")
-
-        scheduleAutoReconnect()
-
-        console.log("NETWORK CONNECTION LOST -> AUTO RECONNECT")
-
+        /*
+         * Network disconnect:
+         * ابدأ محاولة reconnect واحدة فقط.
+         */
         scheduleAutoReconnect()
       },
     )
 
-    return () => {
-      if (subscription && typeof subscription.remove === "function") {
-        subscription.remove()
-      }
+  return () => {
+    if (
+      subscription &&
+      typeof subscription.remove ===
+        "function"
+    ) {
+      subscription.remove()
     }
-  }, [scheduleAutoReconnect, devices, connectingId, trustedPc])
-
+  }
+}, [
+  scheduleAutoReconnect,
+  clearReconnectTimer,
+  devices,
+  connectingId,
+  trustedPc,
+])
   /* ============================================================
    * CONNECTION ERROR
    * ============================================================ */
 
   useEffect(() => {
-    if (!AvocatoFlow || typeof AvocatoFlow.addListener !== "function") {
-      console.error("AvocatoFlow.addListener is not available")
+  if (
+    !AvocatoFlow ||
+    typeof AvocatoFlow.addListener !== "function"
+  ) {
+    console.error(
+      "AvocatoFlow.addListener is not available",
+    )
 
-      return undefined
-    }
+    return undefined
+  }
 
-    const subscription = AvocatoFlow.addListener("onConnectionError", event => {
-      const rawError = event?.error
+  const subscription =
+    AvocatoFlow.addListener(
+      "onConnectionError",
+      event => {
+        const rawError = event?.error
 
-      const message =
-        rawError?.message || rawError || "تعذر الاتصال بالكمبيوتر."
+        const message =
+          rawError?.message ||
+          rawError ||
+          "تعذر الاتصال بالكمبيوتر."
 
-      const errorText = String(message)
+        const errorText = String(message)
 
-      const isConnectionAbort =
-        /software caused connection abort/i.test(errorText) ||
-        /connection abort/i.test(errorText) ||
-        /connection reset/i.test(errorText) ||
-        /socket closed/i.test(errorText) ||
-        /connection closed/i.test(errorText) ||
-        /websocket closed/i.test(errorText) ||
-        /websocket connection closed/i.test(errorText) ||
-        /econnreset/i.test(errorText) ||
-        /econnaborted/i.test(errorText) ||
-        /broken pipe/i.test(errorText) ||
-        /connection refused/i.test(errorText)
+        const generation =
+  connectionGenerationRef.current
 
-      if (isConnectionAbort) {
-        console.log("CONNECTION SOCKET CLOSED:", errorText)
-      } else {
-        console.error("CONNECTION ERROR:", errorText)
-      }
+  if (
+  generation !==
+  connectionGenerationRef.current
+) {
+  console.log(
+    "NETWORK CONNECTION ERROR IGNORED: OLD GENERATION",
+  )
 
-      setConnectionError(isConnectionAbort ? null : errorText)
+  return
+}
 
-      setConnectingId(null)
+        /*
+         * بعض أخطاء WebSocket طبيعية عند إغلاق
+         * الاتصال، لذلك لا نعرضها كخطأ UI.
+         */
+        const isConnectionAbort =
+          /software caused connection abort/i.test(
+            errorText,
+          ) ||
+          /connection abort/i.test(
+            errorText,
+          ) ||
+          /connection reset/i.test(
+            errorText,
+          ) ||
+          /socket closed/i.test(
+            errorText,
+          ) ||
+          /connection closed/i.test(
+            errorText,
+          ) ||
+          /websocket closed/i.test(
+            errorText,
+          ) ||
+          /websocket connection closed/i.test(
+            errorText,
+          ) ||
+          /econnreset/i.test(
+            errorText,
+          ) ||
+          /econnaborted/i.test(
+            errorText,
+          ) ||
+          /broken pipe/i.test(
+            errorText,
+          ) ||
+          /connection refused/i.test(
+            errorText,
+          )
 
-      setAutoConnecting(false)
+        if (isConnectionAbort) {
+          console.log(
+            "CONNECTION SOCKET CLOSED:",
+            errorText,
+          )
+        } else {
+          console.error(
+            "CONNECTION ERROR:",
+            errorText,
+          )
+        }
 
-      setIsSendingTest(false)
+        /*
+         * إذا كان onConnectionStateChanged(false)
+         * قد عالج نفس الانقطاع بالفعل، تجاهل الحدث.
+         */
+        if (
+          disconnectHandledRef.current
+        ) {
+          console.log(
+            "NETWORK CONNECTION ERROR: DISCONNECT ALREADY HANDLED",
+          )
 
-      setConnectedDevice(null)
+          return
+        }
 
-      connectedDeviceRef.current = null
+        disconnectHandledRef.current =
+          true
 
-      setIsTrusted(false)
+        /*
+         * تنظيف حالة الاتصال
+         */
+        setConnectionError(
+          isConnectionAbort
+            ? null
+            : errorText,
+        )
 
-      autoConnectAttemptRef.current = false
+        setConnectingId(null)
 
-      databaseSyncRequestRef.current = null
+        setAutoConnecting(false)
 
-      databaseSyncRunningRef.current = false
+        setIsSendingTest(false)
 
-      setDatabaseSyncing(false)
+        setConnectedDevice(null)
 
-      databaseAutoSyncStartedRef.current = false
+        connectedDeviceRef.current =
+          null
 
-      autoSyncStartedRef.current = false
+        setIsTrusted(false)
 
-      autoSyncQueueRef.current = []
+        autoConnectAttemptRef.current =
+          false
 
-      autoSyncCurrentRef.current = null
+        /*
+         * Database sync
+         */
+        databaseSyncRequestRef.current =
+          null
 
-      for (const [transferId, download] of incomingDownloadsRef.current) {
-        try {
-          if (typeof download.pauseAsync === "function") {
-            download.pauseAsync()
-          }
-        } catch (_) {}
+        databaseSyncRunningRef.current =
+          false
 
-        console.log("PAUSED DOWNLOAD AFTER CONNECTION ERROR:", transferId)
-      }
+        setDatabaseSyncing(false)
 
-      incomingDownloadsRef.current.clear()
+        databaseAutoSyncStartedRef.current =
+          false
 
-      if (manualDisconnectRef.current) {
-        manualDisconnectRef.current = false
+        /*
+         * File auto sync
+         */
+        autoSyncStartedRef.current = false
 
-        return
-      }
+        autoSyncQueueRef.current = []
 
-      autoConnectAttemptRef.current = false
+        autoSyncCurrentRef.current = null
 
-      if (!manualDisconnectRef.current) {
-        console.log("NETWORK CONNECTION ERROR -> AUTO RECONNECT")
+        for (
+          const [
+            transferId,
+            download,
+          ] of incomingDownloadsRef.current
+        ) {
+          try {
+            if (
+              typeof download.pauseAsync ===
+              "function"
+            ) {
+              download.pauseAsync()
+            }
+          } catch (_) {}
+
+          console.log(
+            "PAUSED DOWNLOAD AFTER CONNECTION ERROR:",
+            transferId,
+          )
+        }
+
+        incomingDownloadsRef.current.clear()
+
+        /*
+         * Manual disconnect:
+         * لا تبدأ reconnect.
+         */
+        if (
+          manualDisconnectRef.current
+        ) {
+          manualDisconnectRef.current =
+            false
+
+          clearReconnectTimer()
+
+          reconnectAttemptRef.current = 0
+
+          return
+        }
+
+        /*
+         * Network failure:
+         * ابدأ reconnect مرة واحدة.
+         */
+        console.log(
+          "NETWORK CONNECTION ERROR -> AUTO RECONNECT",
+        )
 
         scheduleAutoReconnect()
-      }
-    })
+      },
+    )
 
-    return () => {
-      if (subscription && typeof subscription.remove === "function") {
-        subscription.remove()
-      }
+  return () => {
+    if (
+      subscription &&
+      typeof subscription.remove ===
+        "function"
+    ) {
+      subscription.remove()
     }
-  }, [scheduleAutoReconnect])
-
+  }
+}, [
+  scheduleAutoReconnect,
+  clearReconnectTimer,
+])
   /* ============================================================
    * NATIVE FILE PROGRESS
    * ============================================================ */
@@ -2890,9 +3140,12 @@ export default function SyncScreen() {
       //
       // يتم تصفير عداد reconnect فقط بعد نجاح الاتصال.
 
-      manualDisconnectRef.current = false
-
       connectionGenerationRef.current += 1
+
+disconnectGenerationRef.current =
+  connectionGenerationRef.current
+
+disconnectHandledRef.current = false
 
       setConnectingId(device.id)
       setConnectionError(null)

@@ -3,7 +3,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -1199,35 +1201,6 @@ export default function SyncScreen() {
   )
 
   const scheduleAutoReconnect = useCallback(() => {
-  if (manualDisconnectRef.current) {
-    return
-  }
-
-  if (connectedDeviceRef.current) {
-    return
-  }
-
-  if (reconnectTimerRef.current) {
-    return
-  }
-
-  const attempt = reconnectAttemptRef.current + 1
-
-  reconnectAttemptRef.current = attempt
-
-  const delay = Math.min(
-    2000 + (attempt - 1) * 1000,
-    5000,
-  )
-
-  console.log("NETWORK AUTO RECONNECT SCHEDULED:", {
-    attempt,
-    delay,
-  })
-
-  reconnectTimerRef.current = setTimeout(async () => {
-    reconnectTimerRef.current = null
-
     if (manualDisconnectRef.current) {
       return
     }
@@ -1236,104 +1209,110 @@ export default function SyncScreen() {
       return
     }
 
-    if (autoConnectAttemptRef.current) {
-      console.log(
-        "NETWORK AUTO RECONNECT SKIPPED: CONNECTION ATTEMPT ALREADY RUNNING",
-      )
-
+    if (reconnectTimerRef.current) {
       return
     }
 
-    const savedPc = await getTrustedPc()
+    const attempt = reconnectAttemptRef.current + 1
 
-    if (!savedPc?.id) {
-      reconnectAttemptRef.current = 0
-      return
-    }
+    reconnectAttemptRef.current = attempt
 
-    if (!savedPc.ip) {
-      console.log(
-        "NETWORK AUTO RECONNECT: NO IP -> DISCOVERY",
-      )
+    const delay = Math.min(2000 + (attempt - 1) * 1000, 5000)
 
-      try {
-        startDiscovery()
-      } catch (error) {
-        console.error(
-          "RECONNECT DISCOVERY ERROR:",
-          error,
-        )
+    console.log("NETWORK AUTO RECONNECT SCHEDULED:", {
+      attempt,
+      delay,
+    })
 
-        scheduleAutoReconnect()
+    reconnectTimerRef.current = setTimeout(async () => {
+      reconnectTimerRef.current = null
+
+      if (manualDisconnectRef.current) {
+        return
       }
 
-      return
-    }
+      if (connectedDeviceRef.current) {
+        return
+      }
 
-    const websocketPort = Number(
-      savedPc.websocketPort ||
-        savedPc.port ||
-        DEFAULT_WEBSOCKET_PORT,
-    )
+      if (autoConnectAttemptRef.current) {
+        console.log(
+          "NETWORK AUTO RECONNECT SKIPPED: CONNECTION ATTEMPT ALREADY RUNNING",
+        )
 
-    try {
-      /*
-       * هذه محاولة اتصال جديدة.
-       * لذلك نسمح بمعالجة disconnect/error جديد.
-       */
-      disconnectHandledRef.current = false
+        return
+      }
 
-      autoConnectAttemptRef.current = true
+      const savedPc = await getTrustedPc()
 
-      setAutoConnecting(true)
-      setConnectingId(savedPc.id)
-      setConnectionError(null)
+      if (!savedPc?.id) {
+        reconnectAttemptRef.current = 0
+        return
+      }
+
+      if (!savedPc.ip) {
+        console.log("NETWORK AUTO RECONNECT: NO IP -> DISCOVERY")
+
+        try {
+          startDiscovery()
+        } catch (error) {
+          console.error("RECONNECT DISCOVERY ERROR:", error)
+
+          scheduleAutoReconnect()
+        }
+
+        return
+      }
+
+      const websocketPort = Number(
+        savedPc.websocketPort || savedPc.port || DEFAULT_WEBSOCKET_PORT,
+      )
 
       try {
-        AvocatoFlow.stopDiscovery()
-      } catch {}
+        /*
+         * هذه محاولة اتصال جديدة.
+         * لذلك نسمح بمعالجة disconnect/error جديد.
+         */
+        disconnectHandledRef.current = false
 
-      setIsDiscovering(false)
+        autoConnectAttemptRef.current = true
 
-      console.log(
-        "NETWORK AUTO RECONNECT TRY:",
-        {
+        setAutoConnecting(true)
+        setConnectingId(savedPc.id)
+        setConnectionError(null)
+
+        try {
+          AvocatoFlow.stopDiscovery()
+        } catch {}
+
+        setIsDiscovering(false)
+
+        console.log("NETWORK AUTO RECONNECT TRY:", {
           attempt,
           id: savedPc.id,
           ip: savedPc.ip,
           websocketPort,
-        },
-      )
-      connectionGenerationRef.current += 1
+        })
+        connectionGenerationRef.current += 1
 
-disconnectGenerationRef.current =
-  connectionGenerationRef.current
+        disconnectGenerationRef.current = connectionGenerationRef.current
 
-disconnectHandledRef.current = false
-      AvocatoFlow.connect(
-        savedPc.ip,
-        websocketPort,
-      )
-    } catch (error) {
-      console.error(
-        "NETWORK AUTO RECONNECT ERROR:",
-        error,
-      )
+        disconnectHandledRef.current = false
+        AvocatoFlow.connect(savedPc.ip, websocketPort)
+      } catch (error) {
+        console.error("NETWORK AUTO RECONNECT ERROR:", error)
 
-      autoConnectAttemptRef.current = false
+        autoConnectAttemptRef.current = false
 
-      setConnectingId(null)
-      setAutoConnecting(false)
+        setConnectingId(null)
+        setAutoConnecting(false)
 
-      if (!manualDisconnectRef.current) {
-        scheduleAutoReconnect()
+        if (!manualDisconnectRef.current) {
+          scheduleAutoReconnect()
+        }
       }
-    }
-  }, delay)
-}, [
-  getTrustedPc,
-  startDiscovery,
-])
+    }, delay)
+  }, [getTrustedPc, startDiscovery])
   /* ============================================================
    * TRUSTED PC
    * ============================================================ */
@@ -2472,24 +2451,16 @@ disconnectHandledRef.current = false
    * ============================================================ */
 
   useEffect(() => {
-  if (
-    !AvocatoFlow ||
-    typeof AvocatoFlow.addListener !== "function"
-  ) {
-    console.error(
-      "AvocatoFlow.addListener is not available",
-    )
+    if (!AvocatoFlow || typeof AvocatoFlow.addListener !== "function") {
+      console.error("AvocatoFlow.addListener is not available")
 
-    return undefined
-  }
+      return undefined
+    }
 
-  const subscription =
-    AvocatoFlow.addListener(
+    const subscription = AvocatoFlow.addListener(
       "onConnectionStateChanged",
       async event => {
-        const connected = Boolean(
-          event?.connected,
-        )
+        const connected = Boolean(event?.connected)
 
         /*
          * ======================================================
@@ -2497,9 +2468,7 @@ disconnectHandledRef.current = false
          * ======================================================
          */
         if (connected) {
-          console.log(
-            "NETWORK CONNECTION ESTABLISHED",
-          )
+          console.log("NETWORK CONNECTION ESTABLISHED")
 
           disconnectHandledRef.current = false
 
@@ -2519,21 +2488,16 @@ disconnectHandledRef.current = false
 
           const device =
             connectedDeviceRef.current ||
-            devices.find(
-              item =>
-                item.id === connectingId,
-            ) ||
+            devices.find(item => item.id === connectingId) ||
             trustedPc
 
           if (device?.id) {
-            connectedDeviceRef.current =
-              device
+            connectedDeviceRef.current = device
 
             setConnectedDevice(device)
           }
 
-          databaseAutoSyncStartedRef.current =
-            false
+          databaseAutoSyncStartedRef.current = false
 
           autoSyncStartedRef.current = false
 
@@ -2564,41 +2528,26 @@ disconnectHandledRef.current = false
          * لذلك لا نعالج نفس الانقطاع مرتين.
          */
         if (disconnectHandledRef.current) {
-          console.log(
-            "NETWORK DISCONNECT IGNORED: ALREADY HANDLED",
-          )
+          console.log("NETWORK DISCONNECT IGNORED: ALREADY HANDLED")
 
           return
         }
 
         disconnectHandledRef.current = true
 
-        console.log(
-          "NETWORK CONNECTION LOST -> AUTO RECONNECT",
-        )
+        console.log("NETWORK CONNECTION LOST -> AUTO RECONNECT")
 
         /*
          * إيقاف أي downloads معلقة
          */
-        for (
-          const [
-            transferId,
-            download,
-          ] of incomingDownloadsRef.current
-        ) {
+        for (const [transferId, download] of incomingDownloadsRef.current) {
           try {
-            if (
-              typeof download.pauseAsync ===
-              "function"
-            ) {
+            if (typeof download.pauseAsync === "function") {
               await download.pauseAsync()
             }
           } catch (_) {}
 
-          console.log(
-            "PAUSED DOWNLOAD AFTER CONNECTION CLOSED:",
-            transferId,
-          )
+          console.log("PAUSED DOWNLOAD AFTER CONNECTION CLOSED:", transferId)
         }
 
         incomingDownloadsRef.current.clear()
@@ -2621,16 +2570,13 @@ disconnectHandledRef.current = false
         /*
          * Database sync
          */
-        databaseSyncRequestRef.current =
-          null
+        databaseSyncRequestRef.current = null
 
-        databaseSyncRunningRef.current =
-          false
+        databaseSyncRunningRef.current = false
 
         setDatabaseSyncing(false)
 
-        databaseAutoSyncStartedRef.current =
-          false
+        databaseAutoSyncStartedRef.current = false
 
         /*
          * File auto sync
@@ -2641,35 +2587,22 @@ disconnectHandledRef.current = false
 
         autoSyncCurrentRef.current = null
 
-        for (
-          const [
-            requestId,
-            waiter,
-          ] of autoSyncWaitersRef.current
-        ) {
+        for (const [requestId, waiter] of autoSyncWaitersRef.current) {
           try {
-            waiter.reject(
-              new Error(
-                "CONNECTION_CLOSED",
-              ),
-            )
+            waiter.reject(new Error("CONNECTION_CLOSED"))
           } catch (_) {}
         }
 
         autoSyncWaitersRef.current.clear()
 
-        autoConnectAttemptRef.current =
-          false
+        autoConnectAttemptRef.current = false
 
         /*
          * Manual disconnect:
          * لا تعمل Auto Reconnect.
          */
-        if (
-          manualDisconnectRef.current
-        ) {
-          manualDisconnectRef.current =
-            false
+        if (manualDisconnectRef.current) {
+          manualDisconnectRef.current = false
 
           clearReconnectTimer()
 
@@ -2686,246 +2619,212 @@ disconnectHandledRef.current = false
       },
     )
 
-  return () => {
-    if (
-      subscription &&
-      typeof subscription.remove ===
-        "function"
-    ) {
-      subscription.remove()
+    return () => {
+      if (subscription && typeof subscription.remove === "function") {
+        subscription.remove()
+      }
     }
-  }
-}, [
-  scheduleAutoReconnect,
-  clearReconnectTimer,
-  devices,
-  connectingId,
-  trustedPc,
-])
+  }, [
+    scheduleAutoReconnect,
+    clearReconnectTimer,
+    devices,
+    connectingId,
+    trustedPc,
+  ])
   /* ============================================================
    * CONNECTION ERROR
    * ============================================================ */
 
   useEffect(() => {
-  if (
-    !AvocatoFlow ||
-    typeof AvocatoFlow.addListener !== "function"
-  ) {
-    console.error(
-      "AvocatoFlow.addListener is not available",
-    )
+    if (!AvocatoFlow || typeof AvocatoFlow.addListener !== "function") {
+      console.error("AvocatoFlow.addListener is not available")
 
-    return undefined
-  }
-
-  const subscription =
-    AvocatoFlow.addListener(
-      "onConnectionError",
-      event => {
-        const rawError = event?.error
-
-        const message =
-          rawError?.message ||
-          rawError ||
-          "تعذر الاتصال بالكمبيوتر."
-
-        const errorText = String(message)
-
-        const generation =
-  connectionGenerationRef.current
-
-  if (
-  generation !==
-  connectionGenerationRef.current
-) {
-  console.log(
-    "NETWORK CONNECTION ERROR IGNORED: OLD GENERATION",
-  )
-
-  return
-}
-
-        /*
-         * بعض أخطاء WebSocket طبيعية عند إغلاق
-         * الاتصال، لذلك لا نعرضها كخطأ UI.
-         */
-        const isConnectionAbort =
-          /software caused connection abort/i.test(
-            errorText,
-          ) ||
-          /connection abort/i.test(
-            errorText,
-          ) ||
-          /connection reset/i.test(
-            errorText,
-          ) ||
-          /socket closed/i.test(
-            errorText,
-          ) ||
-          /connection closed/i.test(
-            errorText,
-          ) ||
-          /websocket closed/i.test(
-            errorText,
-          ) ||
-          /websocket connection closed/i.test(
-            errorText,
-          ) ||
-          /econnreset/i.test(
-            errorText,
-          ) ||
-          /econnaborted/i.test(
-            errorText,
-          ) ||
-          /broken pipe/i.test(
-            errorText,
-          ) ||
-          /connection refused/i.test(
-            errorText,
-          )
-
-        if (isConnectionAbort) {
-          console.log(
-            "CONNECTION SOCKET CLOSED:",
-            errorText,
-          )
-        } else {
-          console.error(
-            "CONNECTION ERROR:",
-            errorText,
-          )
-        }
-
-        /*
-         * إذا كان onConnectionStateChanged(false)
-         * قد عالج نفس الانقطاع بالفعل، تجاهل الحدث.
-         */
-        if (
-          disconnectHandledRef.current
-        ) {
-          console.log(
-            "NETWORK CONNECTION ERROR: DISCONNECT ALREADY HANDLED",
-          )
-
-          return
-        }
-
-        disconnectHandledRef.current =
-          true
-
-        /*
-         * تنظيف حالة الاتصال
-         */
-        setConnectionError(
-          isConnectionAbort
-            ? null
-            : errorText,
-        )
-
-        setConnectingId(null)
-
-        setAutoConnecting(false)
-
-        setIsSendingTest(false)
-
-        setConnectedDevice(null)
-
-        connectedDeviceRef.current =
-          null
-
-        setIsTrusted(false)
-
-        autoConnectAttemptRef.current =
-          false
-
-        /*
-         * Database sync
-         */
-        databaseSyncRequestRef.current =
-          null
-
-        databaseSyncRunningRef.current =
-          false
-
-        setDatabaseSyncing(false)
-
-        databaseAutoSyncStartedRef.current =
-          false
-
-        /*
-         * File auto sync
-         */
-        autoSyncStartedRef.current = false
-
-        autoSyncQueueRef.current = []
-
-        autoSyncCurrentRef.current = null
-
-        for (
-          const [
-            transferId,
-            download,
-          ] of incomingDownloadsRef.current
-        ) {
-          try {
-            if (
-              typeof download.pauseAsync ===
-              "function"
-            ) {
-              download.pauseAsync()
-            }
-          } catch (_) {}
-
-          console.log(
-            "PAUSED DOWNLOAD AFTER CONNECTION ERROR:",
-            transferId,
-          )
-        }
-
-        incomingDownloadsRef.current.clear()
-
-        /*
-         * Manual disconnect:
-         * لا تبدأ reconnect.
-         */
-        if (
-          manualDisconnectRef.current
-        ) {
-          manualDisconnectRef.current =
-            false
-
-          clearReconnectTimer()
-
-          reconnectAttemptRef.current = 0
-
-          return
-        }
-
-        /*
-         * Network failure:
-         * ابدأ reconnect مرة واحدة.
-         */
-        console.log(
-          "NETWORK CONNECTION ERROR -> AUTO RECONNECT",
-        )
-
-        scheduleAutoReconnect()
-      },
-    )
-
-  return () => {
-    if (
-      subscription &&
-      typeof subscription.remove ===
-        "function"
-    ) {
-      subscription.remove()
+      return undefined
     }
-  }
-}, [
-  scheduleAutoReconnect,
-  clearReconnectTimer,
-])
+
+    const subscription = AvocatoFlow.addListener("onConnectionError", event => {
+      const rawError = event?.error
+
+      const message =
+        rawError?.message || rawError || "تعذر الاتصال بالكمبيوتر."
+
+      const errorText = String(message)
+
+      /*
+       * =====================================================
+       * CONNECTION ERROR
+       * =====================================================
+       *
+       * الخطأ هنا خاص بمحاولة الاتصال.
+       * إذا كان الاتصال تلقائيًا، لا نعرض الخطأ للمستخدم.
+       */
+
+      const isAutoConnection =
+        autoConnectAttemptRef.current || Boolean(trustedPc?.ip)
+
+      /*
+       * أخطاء الاتصال الطبيعية أثناء محاولة
+       * الوصول إلى PC مغلق.
+       */
+      const isConnectionAbort =
+        /software caused connection abort/i.test(errorText) ||
+        /connection abort/i.test(errorText) ||
+        /connection reset/i.test(errorText) ||
+        /socket closed/i.test(errorText) ||
+        /connection closed/i.test(errorText) ||
+        /websocket closed/i.test(errorText) ||
+        /websocket connection closed/i.test(errorText) ||
+        /econnreset/i.test(errorText) ||
+        /econnaborted/i.test(errorText) ||
+        /broken pipe/i.test(errorText) ||
+        /connection refused/i.test(errorText) ||
+        /failed to connect/i.test(errorText)
+
+      /*
+       * =====================================================
+       * LOG ONLY
+       * =====================================================
+       *
+       * لا نستخدم console.error في حالة
+       * Auto Reconnect حتى لا يظهر كخطأ أثناء
+       * فتح التطبيق والـPC مغلق.
+       */
+      if (isAutoConnection || isConnectionAbort) {
+        console.log("NETWORK AUTO CONNECT WAITING:", errorText)
+      } else {
+        console.error("CONNECTION ERROR:", errorText)
+      }
+
+      /*
+       * =====================================================
+       * DUPLICATE DISCONNECT GUARD
+       * =====================================================
+       *
+       * onConnectionError و
+       * onConnectionStateChanged(false)
+       * قد يصلان لنفس الانقطاع.
+       */
+      if (disconnectHandledRef.current) {
+        console.log("NETWORK CONNECTION ERROR: DISCONNECT ALREADY HANDLED")
+
+        return
+      }
+
+      disconnectHandledRef.current = true
+
+      /*
+       * =====================================================
+       * CLEAR CONNECTION STATE
+       * =====================================================
+       */
+
+      /*
+       * مهم جدًا:
+       *
+       * لا نضع errorText في connectionError
+       * أثناء Auto Reconnect.
+       *
+       * وبالتالي لن يظهر للمستخدم:
+       *
+       * failed to connect...
+       */
+      if (!isAutoConnection) {
+        setConnectionError(isConnectionAbort ? null : errorText)
+      } else {
+        setConnectionError(null)
+      }
+
+      setConnectingId(null)
+
+      setAutoConnecting(false)
+
+      setIsSendingTest(false)
+
+      setConnectedDevice(null)
+
+      connectedDeviceRef.current = null
+
+      setIsTrusted(false)
+
+      autoConnectAttemptRef.current = false
+
+      /*
+       * =====================================================
+       * DATABASE SYNC
+       * =====================================================
+       */
+
+      databaseSyncRequestRef.current = null
+
+      databaseSyncRunningRef.current = false
+
+      setDatabaseSyncing(false)
+
+      databaseAutoSyncStartedRef.current = false
+
+      /*
+       * =====================================================
+       * FILE AUTO SYNC
+       * =====================================================
+       */
+
+      autoSyncStartedRef.current = false
+
+      autoSyncQueueRef.current = []
+
+      autoSyncCurrentRef.current = null
+
+      /*
+       * =====================================================
+       * PAUSE INCOMING DOWNLOADS
+       * =====================================================
+       */
+
+      for (const [transferId, download] of incomingDownloadsRef.current) {
+        try {
+          if (typeof download.pauseAsync === "function") {
+            download.pauseAsync()
+          }
+        } catch (_) {}
+
+        console.log("PAUSED DOWNLOAD AFTER CONNECTION ERROR:", transferId)
+      }
+
+      incomingDownloadsRef.current.clear()
+
+      /*
+       * =====================================================
+       * MANUAL DISCONNECT
+       * =====================================================
+       */
+
+      if (manualDisconnectRef.current) {
+        manualDisconnectRef.current = false
+
+        clearReconnectTimer()
+
+        reconnectAttemptRef.current = 0
+
+        return
+      }
+
+      /*
+       * =====================================================
+       * AUTO RECONNECT
+       * =====================================================
+       */
+
+      console.log("NETWORK CONNECTION ERROR -> AUTO RECONNECT")
+
+      scheduleAutoReconnect()
+    })
+
+    return () => {
+      if (subscription && typeof subscription.remove === "function") {
+        subscription.remove()
+      }
+    }
+  }, [scheduleAutoReconnect, clearReconnectTimer, trustedPc])
   /* ============================================================
    * NATIVE FILE PROGRESS
    * ============================================================ */
@@ -3142,10 +3041,9 @@ disconnectHandledRef.current = false
 
       connectionGenerationRef.current += 1
 
-disconnectGenerationRef.current =
-  connectionGenerationRef.current
+      disconnectGenerationRef.current = connectionGenerationRef.current
 
-disconnectHandledRef.current = false
+      disconnectHandledRef.current = false
 
       setConnectingId(device.id)
       setConnectionError(null)
@@ -4044,639 +3942,657 @@ disconnectHandledRef.current = false
    * ============================================================ */
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* ======================================================
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: "#0f172a" }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 5}
+    >
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+      >
+        {/* ======================================================
           PAIR MODAL
           ====================================================== */}
 
-      <Modal
-        visible={pairConfirmVisible}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => {
-          setPairConfirmVisible(false)
+        <Modal
+          visible={pairConfirmVisible}
+          transparent={true}
+          animationType="fade"
+          onRequestClose={() => {
+            setPairConfirmVisible(false)
 
-          setPairCodeInput("")
+            setPairCodeInput("")
 
-          setPairRequest(null)
-        }}
-      >
-        <View
-          style={{
-            flex: 1,
-
-            backgroundColor: "rgba(0,0,0,0.5)",
-
-            alignItems: "center",
-
-            justifyContent: "center",
-
-            paddingHorizontal: 24,
+            setPairRequest(null)
           }}
         >
           <View
             style={{
-              width: "100%",
+              flex: 1,
 
-              backgroundColor: "#ffffff",
+              backgroundColor: "rgba(0,0,0,0.75)",
 
-              borderRadius: 18,
+              alignItems: "center",
 
-              padding: 20,
+              justifyContent: "center",
 
-              elevation: 8,
-
-              shadowColor: "#000",
-
-              shadowOffset: {
-                width: 0,
-                height: 4,
-              },
-
-              shadowOpacity: 0.2,
-
-              shadowRadius: 10,
+              paddingHorizontal: 24,
             }}
           >
-            <Text
+            <View
               style={{
-                fontSize: 20,
+                width: "100%",
 
-                fontWeight: "800",
+                backgroundColor: "#1e293b",
 
-                color: "#0f172a",
+                borderRadius: 18,
 
-                textAlign: "center",
-
-                marginBottom: 8,
-              }}
-            >
-              رمز الاقتران
-            </Text>
-
-            <Text
-              style={{
-                fontSize: 13,
-
-                color: "#64748b",
-
-                textAlign: "center",
-
-                marginBottom: 12,
-              }}
-            >
-              أدخل رمز الاقتران الظاهر على الكمبيوتر
-            </Text>
-
-            <TextInput
-              value={pairCodeInput}
-              onChangeText={setPairCodeInput}
-              placeholder="أدخل رمز الاقتران"
-              placeholderTextColor="#94a3b8"
-              keyboardType="number-pad"
-              maxLength={6}
-              autoFocus={true}
-              textAlign="center"
-              style={{
-                height: 50,
+                padding: 20,
 
                 borderWidth: 1,
 
-                borderColor: "#cbd5e1",
+                borderColor: "#334155",
 
-                borderRadius: 12,
+                elevation: 8,
 
-                fontSize: 20,
+                shadowColor: "#000",
 
-                fontWeight: "700",
+                shadowOffset: {
+                  width: 0,
+                  height: 4,
+                },
 
-                color: "#0f172a",
+                shadowOpacity: 0.3,
 
-                marginBottom: 18,
-
-                paddingHorizontal: 12,
-              }}
-            />
-
-            <View
-              style={{
-                flexDirection: "row-reverse",
-
-                gap: 8,
+                shadowRadius: 10,
               }}
             >
-              <Pressable
-                onPress={() => {
-                  setPairConfirmVisible(false)
-
-                  setPairCodeInput("")
-
-                  setPairRequest(null)
-                }}
+              <Text
                 style={{
-                  flex: 1,
+                  fontSize: 20,
 
-                  height: 48,
+                  fontWeight: "800",
+
+                  color: "#f1f5f9",
+
+                  textAlign: "center",
+
+                  marginBottom: 8,
+                }}
+              >
+                رمز الاقتران
+              </Text>
+
+              <Text
+                style={{
+                  fontSize: 13,
+
+                  color: "#94a3b8",
+
+                  textAlign: "center",
+
+                  marginBottom: 12,
+                }}
+              >
+                أدخل رمز الاقتران الظاهر على الكمبيوتر
+              </Text>
+
+              <TextInput
+                value={pairCodeInput}
+                onChangeText={setPairCodeInput}
+                placeholder="أدخل رمز الاقتران"
+                placeholderTextColor="#64748b"
+                keyboardType="number-pad"
+                maxLength={6}
+                autoFocus={true}
+                textAlign="center"
+                style={{
+                  height: 50,
+
+                  borderWidth: 1,
+
+                  borderColor: "#334155",
 
                   borderRadius: 12,
 
-                  backgroundColor: "#f1f5f9",
+                  fontSize: 20,
 
-                  alignItems: "center",
+                  fontWeight: "700",
 
-                  justifyContent: "center",
+                  color: "#f1f5f9",
+
+                  backgroundColor: "#0f172a",
+
+                  marginBottom: 18,
+
+                  paddingHorizontal: 12,
+                }}
+              />
+
+              <View
+                style={{
+                  flexDirection: "row-reverse",
+
+                  gap: 8,
                 }}
               >
-                <Text
-                  style={{
-                    color: "#475569",
-
-                    fontSize: 14,
-
-                    fontWeight: "800",
-                  }}
-                >
-                  إلغاء
-                </Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => {
-                  const enteredCode = pairCodeInput.trim()
-
-                  if (!enteredCode) {
-                    Alert.alert("رمز الاقتران", "يرجى إدخال رمز الاقتران.")
-
-                    return
-                  }
-
-                  if (enteredCode !== String(pairRequest?.code || "")) {
-                    Alert.alert(
-                      "رمز غير صحيح",
-                      "رمز الاقتران الذي أدخلته غير صحيح.",
-                    )
-
-                    return
-                  }
-
-                  try {
-                    AvocatoFlow.sendMessage(
-                      JSON.stringify({
-                        type: "PAIR_CONFIRM",
-
-                        version: 1,
-
-                        requestId: pairRequest?.requestId,
-
-                        timestamp: Date.now(),
-
-                        payload: {
-                          requestId: pairRequest?.requestId,
-
-                          code: enteredCode,
-                        },
-                      }),
-                    )
-
+                <Pressable
+                  onPress={() => {
                     setPairConfirmVisible(false)
 
                     setPairCodeInput("")
 
                     setPairRequest(null)
-                  } catch (error) {
-                    console.error("PAIR_CONFIRM ERROR:", error)
-
-                    Alert.alert("خطأ", error?.message || "تعذر تأكيد الاقتران.")
-                  }
-                }}
-                style={{
-                  flex: 1,
-
-                  height: 48,
-
-                  borderRadius: 12,
-
-                  backgroundColor: "#2563eb",
-
-                  alignItems: "center",
-
-                  justifyContent: "center",
-                }}
-              >
-                <Text
+                  }}
                   style={{
-                    color: "#ffffff",
+                    flex: 1,
 
-                    fontSize: 14,
+                    height: 48,
 
-                    fontWeight: "800",
+                    borderRadius: 12,
+
+                    backgroundColor: "#334155",
+
+                    alignItems: "center",
+
+                    justifyContent: "center",
                   }}
                 >
-                  تأكيد
-                </Text>
-              </Pressable>
+                  <Text
+                    style={{
+                      color: "#cbd5e1",
+
+                      fontSize: 14,
+
+                      fontWeight: "800",
+                    }}
+                  >
+                    إلغاء
+                  </Text>
+                </Pressable>
+
+                <Pressable
+                  onPress={() => {
+                    const enteredCode = pairCodeInput.trim()
+
+                    if (!enteredCode) {
+                      Alert.alert("رمز الاقتران", "يرجى إدخال رمز الاقتران.")
+
+                      return
+                    }
+
+                    if (enteredCode !== String(pairRequest?.code || "")) {
+                      Alert.alert(
+                        "رمز غير صحيح",
+                        "رمز الاقتران الذي أدخلته غير صحيح.",
+                      )
+
+                      return
+                    }
+
+                    try {
+                      AvocatoFlow.sendMessage(
+                        JSON.stringify({
+                          type: "PAIR_CONFIRM",
+
+                          version: 1,
+
+                          requestId: pairRequest?.requestId,
+
+                          timestamp: Date.now(),
+
+                          payload: {
+                            requestId: pairRequest?.requestId,
+
+                            code: enteredCode,
+                          },
+                        }),
+                      )
+
+                      setPairConfirmVisible(false)
+
+                      setPairCodeInput("")
+
+                      setPairRequest(null)
+                    } catch (error) {
+                      console.error("PAIR_CONFIRM ERROR:", error)
+
+                      Alert.alert(
+                        "خطأ",
+                        error?.message || "تعذر تأكيد الاقتران.",
+                      )
+                    }
+                  }}
+                  style={{
+                    flex: 1,
+
+                    height: 48,
+
+                    borderRadius: 12,
+
+                    backgroundColor: "#4f46e5",
+
+                    alignItems: "center",
+
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: "#ffffff",
+
+                      fontSize: 14,
+
+                      fontWeight: "800",
+                    }}
+                  >
+                    تأكيد
+                  </Text>
+                </Pressable>
+              </View>
             </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      {/* ======================================================
+        {/* ======================================================
           HEADER
           ====================================================== */}
 
-      <View style={styles.header}>
-        <View style={styles.headerIcon}>
-          <MaterialIcons name="sync" size={40} color="#2563eb" />
+        <View style={styles.header}>
+          <View style={styles.headerIcon}>
+            <MaterialIcons name="sync" size={40} color="#818cf8" />
+          </View>
+
+          <View style={styles.headerText}>
+            <Text style={styles.title}>مزامنة الشبكه</Text>
+
+            <Text style={styles.subtitle}>
+              نقل ومزامنة البيانات مع تطبيق الكمبيوتر
+            </Text>
+          </View>
         </View>
 
-        <View style={styles.headerText}>
-          <Text style={styles.title}>مزامنة الشبكه</Text>
-
-          <Text style={styles.subtitle}>
-            نقل ومزامنة البيانات مع تطبيق الكمبيوتر
-          </Text>
-        </View>
-      </View>
-
-      {/* ======================================================
+        {/* ======================================================
           CONNECTION CARD
           ====================================================== */}
 
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>حالة الاتصال</Text>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>حالة الاتصال</Text>
 
-          <View
-            style={[
-              styles.statusBadge,
-
-              connectedDevice
-                ? styles.statusConnected
-                : styles.statusDisconnected,
-            ]}
-          >
             <View
-              style={{
-                width: 8,
+              style={[
+                styles.statusBadge,
 
-                height: 8,
+                connectedDevice
+                  ? styles.statusConnected
+                  : styles.statusDisconnected,
+              ]}
+            >
+              <View
+                style={{
+                  width: 8,
 
-                borderRadius: 4,
+                  height: 8,
 
-                marginRight: 6,
+                  borderRadius: 4,
 
-                backgroundColor: connectedDevice ? "#16a34a" : "#c0392b",
-              }}
-            />
+                  marginRight: 6,
 
-            <Text style={styles.statusText}>
-              {connectedDevice ? "متصل" : "غير متصل"}
-            </Text>
-          </View>
-        </View>
+                  backgroundColor: connectedDevice ? "#34d399" : "#f87171",
+                }}
+              />
 
-        {connectedDevice ? (
-          <View style={styles.connectedBox}>
-            <View style={styles.deviceIcon}>
-              <MaterialIcons name="computer" size={32} color="#2563eb" />
-            </View>
-
-            <View style={styles.deviceInfo}>
-              <Text style={styles.deviceName}>{connectedDevice.name}</Text>
-
-              <Text style={styles.deviceIp}>ID::[{connectedDevice.id}]</Text>
-              <Text style={styles.deviceIp}>{connectedDevice.ip}</Text>
-
-              <Text style={styles.trustedText}>
-                {isTrusted ? "✓ جهاز موثوق" : "⚠ يحتاج إلى اقتران"}
+              <Text style={styles.statusText}>
+                {connectedDevice ? "متصل" : "غير متصل"}
               </Text>
             </View>
           </View>
-        ) : (
-          <View style={styles.notConnected}>
-            <MaterialIcons
-              name={isDiscovering ? "search" : "computer"}
-              size={42}
-              color="#94a3b8"
-            />
 
-            <Text style={styles.notConnectedText}>
-              {isDiscovering
-                ? "جاري البحث عن الكمبيوتر..."
-                : "لم يتم الاتصال بأي كمبيوتر"}
-            </Text>
-          </View>
-        )}
+          {connectedDevice ? (
+            <View style={styles.connectedBox}>
+              <View style={styles.deviceIcon}>
+                <MaterialIcons name="computer" size={32} color="#818cf8" />
+              </View>
 
-        {connectionError && (
-          <View style={styles.errorBox}>
-            <MaterialIcons name="error-outline" size={22} color="#dc2626" />
+              <View style={styles.deviceInfo}>
+                <Text style={styles.deviceName}>{connectedDevice.name}</Text>
 
-            <Text style={styles.errorText}>{connectionError}</Text>
-          </View>
-        )}
+                <Text style={styles.deviceIp}>ID::[{connectedDevice.id}]</Text>
+                <Text style={styles.deviceIp}>{connectedDevice.ip}</Text>
 
-        {connectedDevice ? (
-          <View style={styles.actionsRow}>
-            {!isTrusted && (
-              <Pressable
-                style={[styles.primaryButton, styles.flexButton]}
-                onPress={requestPairing}
-              >
-                <MaterialIcons name="link" size={20} color="#fff" />
-
-                <Text style={styles.primaryButtonText}>إقران الجهاز</Text>
-              </Pressable>
-            )}
-
-            {isTrusted && (
-              <Pressable
-                style={[styles.forgetButton, styles.flexButton]}
-                onPress={forgetPc}
-              >
-                <MaterialIcons
-                  name="delete-outline"
-                  size={20}
-                  color="#dc2626"
-                />
-
-                <Text
-                  style={{
-                    color: "#dc2626",
-
-                    fontWeight: "700",
-
-                    fontSize: 14,
-                  }}
-                >
-                  إلغاء الاقتران
+                <Text style={styles.trustedText}>
+                  {isTrusted ? "✓ جهاز موثوق" : "⚠ يحتاج إلى اقتران"}
                 </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.notConnected}>
+              <MaterialIcons
+                name={isDiscovering ? "search" : "computer"}
+                size={42}
+                color="#64748b"
+              />
+
+              <Text style={styles.notConnectedText}>
+                {isDiscovering
+                  ? "جاري البحث عن الكمبيوتر..."
+                  : "لم يتم الاتصال بأي كمبيوتر"}
+              </Text>
+            </View>
+          )}
+
+          {connectionError && (
+            <View style={styles.errorBox}>
+              <MaterialIcons name="error-outline" size={22} color="#f87171" />
+
+              <Text style={styles.errorText}>{connectionError}</Text>
+            </View>
+          )}
+
+          {connectedDevice ? (
+            <View style={styles.actionsRow}>
+              {!isTrusted && (
+                <Pressable
+                  style={[styles.primaryButton, styles.flexButton]}
+                  onPress={requestPairing}
+                >
+                  <MaterialIcons name="link" size={20} color="#fff" />
+
+                  <Text style={styles.primaryButtonText}>إقران الجهاز</Text>
+                </Pressable>
+              )}
+
+              {isTrusted && (
+                <Pressable
+                  style={[styles.forgetButton, styles.flexButton]}
+                  onPress={forgetPc}
+                >
+                  <MaterialIcons
+                    name="delete-outline"
+                    size={20}
+                    color="#f87171"
+                  />
+
+                  <Text
+                    style={{
+                      color: "#f87171",
+
+                      fontWeight: "700",
+
+                      fontSize: 14,
+                    }}
+                  >
+                    إلغاء الاقتران
+                  </Text>
+                </Pressable>
+              )}
+
+              <Pressable
+                style={[styles.disconnectButton, styles.flexButton]}
+                onPress={disconnect}
+              >
+                <MaterialIcons name="link-off" size={20} color="#fff" />
+
+                <Text style={styles.forgetButtonText}>قطع الإتصال</Text>
               </Pressable>
-            )}
-
+            </View>
+          ) : (
             <Pressable
-              style={[styles.disconnectButton, styles.flexButton]}
-              onPress={disconnect}
+              style={styles.primaryButton}
+              onPress={() => startDiscovery()}
             >
-              <MaterialIcons name="link-off" size={20} color="#fff" />
+              {isDiscovering ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <MaterialIcons name="refresh" size={21} color="#fff" />
+              )}
 
-              <Text style={styles.forgetButtonText}>قطع الإتصال</Text>
+              <Text style={styles.primaryButtonText}>
+                {isDiscovering ? "جاري البحث..." : "البحث عن الكمبيوتر"}
+              </Text>
             </Pressable>
-          </View>
-        ) : (
-          <Pressable
-            style={styles.primaryButton}
-            onPress={() => startDiscovery()}
-          >
-            {isDiscovering ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <MaterialIcons name="refresh" size={21} color="#fff" />
-            )}
+          )}
+        </View>
 
-            <Text style={styles.primaryButtonText}>
-              {isDiscovering ? "جاري البحث..." : "البحث عن الكمبيوتر"}
-            </Text>
-          </Pressable>
-        )}
-      </View>
-
-      {/* ======================================================
+        {/* ======================================================
           DEVICES
           ====================================================== */}
 
-      {!connectedDevice && devices.length > 0 && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>أجهزة الكمبيوتر</Text>
+        {!connectedDevice && devices.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>أجهزة الكمبيوتر</Text>
 
-            <Text style={styles.countText}>{devices.length}</Text>
+              <Text style={styles.countText}>{devices.length}</Text>
+            </View>
+
+            {devices.map(device => {
+              const isConnecting = connectingId === device.id
+
+              return (
+                <Pressable
+                  key={device.id}
+                  style={styles.deviceRow}
+                  onPress={() => handleConnect(device)}
+                  disabled={Boolean(connectingId)}
+                >
+                  <View style={styles.deviceRowIcon}>
+                    <MaterialIcons name="computer" size={26} color="#818cf8" />
+                  </View>
+
+                  <View style={styles.deviceRowInfo}>
+                    <Text style={styles.deviceRowName}>
+                      {device.name}-{device.id}
+                    </Text>
+
+                    <Text style={styles.deviceRowIp}>{device.ip}</Text>
+
+                    <Text style={styles.deviceRowPort}>
+                      WS:
+                      {device.websocketPort}
+                      {" | "}
+                      HTTP:
+                      {device.httpPort}
+                    </Text>
+                  </View>
+
+                  {isConnecting ? (
+                    <ActivityIndicator size="small" color="#818cf8" />
+                  ) : (
+                    <MaterialIcons
+                      name="chevron-left"
+                      size={28}
+                      color="#64748b"
+                    />
+                  )}
+                </Pressable>
+              )
+            })}
           </View>
+        )}
 
-          {devices.map(device => {
-            const isConnecting = connectingId === device.id
-
-            return (
-              <Pressable
-                key={device.id}
-                style={styles.deviceRow}
-                onPress={() => handleConnect(device)}
-                disabled={Boolean(connectingId)}
-              >
-                <View style={styles.deviceRowIcon}>
-                  <MaterialIcons name="computer" size={26} color="#2563eb" />
-                </View>
-
-                <View style={styles.deviceRowInfo}>
-                  <Text style={styles.deviceRowName}>
-                    {device.name}-{device.id}
-                  </Text>
-
-                  <Text style={styles.deviceRowIp}>{device.ip}</Text>
-
-                  <Text style={styles.deviceRowPort}>
-                    WS:
-                    {device.websocketPort}
-                    {" | "}
-                    HTTP:
-                    {device.httpPort}
-                  </Text>
-                </View>
-
-                {isConnecting ? (
-                  <ActivityIndicator size="small" color="#2563eb" />
-                ) : (
-                  <MaterialIcons
-                    name="chevron-left"
-                    size={28}
-                    color="#94a3b8"
-                  />
-                )}
-              </Pressable>
-            )
-          })}
-        </View>
-      )}
-
-      {databaseSyncSuccess && (
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: "#dcfce7",
-            borderWidth: 1,
-            borderColor: "#86efac",
-            borderRadius: 13,
-            padding: 13,
-            marginBottom: 12,
-          }}
-        >
-          <MaterialIcons name="check-circle" size={22} color="#16a34a" />
-
-          <Text
+        {databaseSyncSuccess && (
+          <View
             style={{
-              flex: 1,
-              marginLeft: 8,
-              fontSize: 13,
-              fontWeight: "700",
-              color: "#166534",
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: "#064e3b",
+              borderWidth: 1,
+              borderColor: "#047857",
+              borderRadius: 13,
+              padding: 13,
+              marginBottom: 12,
             }}
           >
-            تمت المزامنة بنجاح
-          </Text>
-        </View>
-      )}
+            <MaterialIcons name="check-circle" size={22} color="#34d399" />
 
-      {/* ======================================================
+            <Text
+              style={{
+                flex: 1,
+                marginLeft: 8,
+                fontSize: 13,
+                fontWeight: "700",
+                color: "#d1fae5",
+              }}
+            >
+              تمت المزامنة بنجاح
+            </Text>
+          </View>
+        )}
+
+        {/* ======================================================
           TRANSFERS
           ====================================================== */}
 
-      {isTrusted && connectedDevice && transfers.length > 0 && (
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>الملفات ({transfers.length})</Text>
+        {isTrusted && connectedDevice && transfers.length > 0 && (
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <Text style={styles.cardTitle}>الملفات ({transfers.length})</Text>
 
-            <MaterialIcons name="loop" size={22} color="#2563eb" />
-          </View>
+              <MaterialIcons name="loop" size={22} color="#818cf8" />
+            </View>
 
-          <View style={styles.transferList}>
-            {transfers
-              .slice()
-              .reverse()
-              .map(transfer => {
-                const progress = getProgress(transfer)
+            <View style={styles.transferList}>
+              {transfers
+                .slice()
+                .reverse()
+                .map(transfer => {
+                  const progress = getProgress(transfer)
 
-                const isIncoming = transfer.direction === "PC_TO_ANDROID"
+                  const isIncoming = transfer.direction === "PC_TO_ANDROID"
 
-                return (
-                  <View key={transfer.requestId} style={styles.transferItem}>
-                    <View style={styles.transferTop}>
-                      <MaterialIcons
-                        name={
-                          transfer.status === "completed"
-                            ? "check-circle"
-                            : transfer.status === "error"
-                              ? "error"
-                              : isIncoming
-                                ? "download"
-                                : "insert-drive-file"
-                        }
-                        size={23}
-                        color={
-                          transfer.status === "completed"
-                            ? "#16a34a"
-                            : transfer.status === "error"
-                              ? "#dc2626"
-                              : "#2563eb"
-                        }
-                      />
+                  return (
+                    <View key={transfer.requestId} style={styles.transferItem}>
+                      <View style={styles.transferTop}>
+                        <MaterialIcons
+                          name={
+                            transfer.status === "completed"
+                              ? "check-circle"
+                              : transfer.status === "error"
+                                ? "error"
+                                : isIncoming
+                                  ? "download"
+                                  : "insert-drive-file"
+                          }
+                          size={23}
+                          color={
+                            transfer.status === "completed"
+                              ? "#34d399"
+                              : transfer.status === "error"
+                                ? "#f87171"
+                                : "#818cf8"
+                          }
+                        />
 
-                      <View style={styles.transferInfo}>
-                        <Text numberOfLines={1} style={styles.transferName}>
-                          {transfer.fileName}
-                        </Text>
+                        <View style={styles.transferInfo}>
+                          <Text numberOfLines={1} style={styles.transferName}>
+                            {transfer.fileName}
+                          </Text>
 
-                        <Text style={styles.transferSize}>
-                          {formatBytes(transfer.transferred)}
-                          {" / "}
-                          {formatBytes(transfer.total)}
-                        </Text>
+                          <Text style={styles.transferSize}>
+                            {formatBytes(transfer.transferred)}
+                            {" / "}
+                            {formatBytes(transfer.total)}
+                          </Text>
+                        </View>
+
+                        <Text style={styles.progressText}>{progress}%</Text>
                       </View>
 
-                      <Text style={styles.progressText}>{progress}%</Text>
-                    </View>
+                      <View style={styles.progressBackground}>
+                        <View
+                          style={[
+                            styles.progressBar,
+                            {
+                              width: `${progress}%`,
+                            },
+                          ]}
+                        />
+                      </View>
 
-                    <View style={styles.progressBackground}>
-                      <View
-                        style={[
-                          styles.progressBar,
-                          {
-                            width: `${progress}%`,
-                          },
-                        ]}
-                      />
-                    </View>
-
-                    <Text style={styles.transferStatus}>
-                      {transfer.status === "waiting"
-                        ? isIncoming
-                          ? "جاري تجهيز استقبال الملف..."
-                          : "في انتظار الكمبيوتر..."
-                        : transfer.status === "transferring"
+                      <Text style={styles.transferStatus}>
+                        {transfer.status === "waiting"
                           ? isIncoming
-                            ? "جاري تنزيل الملف من الكمبيوتر..."
-                            : progress >= 100
-                              ? "اكتمل رفع الملف، في انتظار تأكيد الكمبيوتر..."
-                              : "جاري النقل..."
-                          : transfer.status === "completed"
+                            ? "جاري تجهيز استقبال الملف..."
+                            : "في انتظار الكمبيوتر..."
+                          : transfer.status === "transferring"
                             ? isIncoming
-                              ? "تم تنزيل الملف إلى الهاتف بنجاح"
-                              : "تم النقل بنجاح"
-                            : transfer.status === "error"
-                              ? "فشل النقل"
-                              : ""}
-                    </Text>
-
-                    {isIncoming && transfer.status === "transferring" && (
-                      <Text
-                        style={[
-                          styles.transferStatus,
-                          {
-                            color: "#2563eb",
-
-                            marginTop: 4,
-                          },
-                        ]}
-                      >
-                        PC → Android
+                              ? "جاري تنزيل الملف من الكمبيوتر..."
+                              : progress >= 100
+                                ? "اكتمل رفع الملف، في انتظار تأكيد الكمبيوتر..."
+                                : "جاري النقل..."
+                            : transfer.status === "completed"
+                              ? isIncoming
+                                ? "تم تنزيل الملف إلى الهاتف بنجاح"
+                                : "تم النقل بنجاح"
+                              : transfer.status === "error"
+                                ? "فشل النقل"
+                                : ""}
                       </Text>
-                    )}
 
-                    {!isIncoming && transfer.status !== "completed" && (
-                      <Text
-                        style={[
-                          styles.transferStatus,
-                          {
-                            color: "#64748b",
+                      {isIncoming && transfer.status === "transferring" && (
+                        <Text
+                          style={[
+                            styles.transferStatus,
+                            {
+                              color: "#818cf8",
 
-                            marginTop: 4,
-                          },
-                        ]}
-                      >
-                        Android → PC
-                      </Text>
-                    )}
-                  </View>
-                )
-              })}
+                              marginTop: 4,
+                            },
+                          ]}
+                        >
+                          PC → Android
+                        </Text>
+                      )}
+
+                      {!isIncoming && transfer.status !== "completed" && (
+                        <Text
+                          style={[
+                            styles.transferStatus,
+                            {
+                              color: "#94a3b8",
+
+                              marginTop: 4,
+                            },
+                          ]}
+                        >
+                          Android → PC
+                        </Text>
+                      )}
+                    </View>
+                  )
+                })}
+            </View>
           </View>
-        </View>
-      )}
+        )}
 
-      {/* ======================================================
+        {/* ======================================================
           INFO
           ====================================================== */}
 
-      <View style={styles.infoBox}>
-        <MaterialIcons name="info-outline" size={22} color="#2563eb" />
+        <View style={styles.infoBox}>
+          <MaterialIcons name="info-outline" size={22} color="#818cf8" />
 
-        <Text style={styles.infoText}>
-          يجب أن يكون الهاتف والكمبيوتر على نفس شبكة Wi-Fi أو الشبكة المحلية.
-        </Text>
-      </View>
-    </ScrollView>
+          <Text style={styles.infoText}>
+            يجب أن يكون الهاتف والكمبيوتر على نفس شبكة Wi-Fi أو الشبكة المحلية.
+          </Text>
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
   )
 }
 
 /* ==============================================================
- * STYLES
+ * STYLES (Dark Mode)
  * ============================================================== */
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
 
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0f172a",
   },
 
   content: {
@@ -4712,7 +4628,7 @@ const styles = StyleSheet.create({
 
     fontWeight: "800",
 
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   subtitle: {
@@ -4720,11 +4636,11 @@ const styles = StyleSheet.create({
 
     fontSize: 14,
 
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   card: {
-    backgroundColor: "#ffffff",
+    backgroundColor: "#1e293b",
 
     borderRadius: 18,
 
@@ -4734,7 +4650,7 @@ const styles = StyleSheet.create({
 
     borderWidth: 1,
 
-    borderColor: "#e2e8f0",
+    borderColor: "#334155",
 
     shadowColor: "#000",
 
@@ -4743,7 +4659,7 @@ const styles = StyleSheet.create({
       height: 2,
     },
 
-    shadowOpacity: 0.04,
+    shadowOpacity: 0.2,
 
     shadowRadius: 5,
 
@@ -4765,7 +4681,7 @@ const styles = StyleSheet.create({
 
     fontWeight: "800",
 
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   countText: {
@@ -4775,9 +4691,9 @@ const styles = StyleSheet.create({
 
     borderRadius: 14,
 
-    backgroundColor: "#eff6ff",
+    backgroundColor: "#312e81",
 
-    color: "#2563eb",
+    color: "#818cf8",
 
     textAlign: "center",
 
@@ -4801,11 +4717,11 @@ const styles = StyleSheet.create({
   },
 
   statusConnected: {
-    backgroundColor: "#dcfce7",
+    backgroundColor: "#064e3b",
   },
 
   statusDisconnected: {
-    backgroundColor: "#f1f5f9",
+    backgroundColor: "#334155",
   },
 
   statusDot: {
@@ -4823,7 +4739,7 @@ const styles = StyleSheet.create({
 
     fontWeight: "700",
 
-    color: "#334155",
+    color: "#cbd5e1",
   },
 
   connectedBox: {
@@ -4831,13 +4747,17 @@ const styles = StyleSheet.create({
 
     alignItems: "center",
 
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0f172a",
 
     borderRadius: 14,
 
     padding: 14,
 
     marginBottom: 14,
+
+    borderWidth: 1,
+
+    borderColor: "#334155",
   },
 
   deviceIcon: {
@@ -4847,7 +4767,7 @@ const styles = StyleSheet.create({
 
     borderRadius: 14,
 
-    backgroundColor: "#eff6ff",
+    backgroundColor: "#312e81",
 
     alignItems: "center",
 
@@ -4867,7 +4787,7 @@ const styles = StyleSheet.create({
 
     fontWeight: "800",
 
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   deviceIp: {
@@ -4875,7 +4795,7 @@ const styles = StyleSheet.create({
 
     fontSize: 13,
 
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   trustedText: {
@@ -4883,7 +4803,7 @@ const styles = StyleSheet.create({
 
     fontSize: 13,
 
-    color: "#16a34a",
+    color: "#34d399",
 
     fontWeight: "700",
   },
@@ -4901,7 +4821,7 @@ const styles = StyleSheet.create({
 
     fontSize: 14,
 
-    color: "#64748b",
+    color: "#94a3b8",
 
     textAlign: "center",
   },
@@ -4911,11 +4831,11 @@ const styles = StyleSheet.create({
 
     alignItems: "center",
 
-    backgroundColor: "#fef2f2",
+    backgroundColor: "#451a03",
 
     borderWidth: 1,
 
-    borderColor: "#fecaca",
+    borderColor: "#78350f",
 
     borderRadius: 12,
 
@@ -4929,7 +4849,7 @@ const styles = StyleSheet.create({
 
     marginRight: 8,
 
-    color: "#b91c1c",
+    color: "#fca5a5",
 
     fontSize: 13,
   },
@@ -4939,7 +4859,7 @@ const styles = StyleSheet.create({
 
     borderRadius: 12,
 
-    backgroundColor: "#2563eb",
+    backgroundColor: "#4f46e5",
 
     flexDirection: "row",
 
@@ -4965,11 +4885,11 @@ const styles = StyleSheet.create({
 
     borderRadius: 12,
 
-    backgroundColor: "#eff6ff",
+    backgroundColor: "#312e81",
 
     borderWidth: 1,
 
-    borderColor: "#bfdbfe",
+    borderColor: "#4338ca",
 
     flexDirection: "row",
 
@@ -4983,7 +4903,7 @@ const styles = StyleSheet.create({
   },
 
   secondaryButtonText: {
-    color: "#2563eb",
+    color: "#818cf8",
 
     fontSize: 14,
 
@@ -5011,13 +4931,13 @@ const styles = StyleSheet.create({
 
     borderRadius: 12,
 
-    backgroundColor: "#c0392b",
+    backgroundColor: "#991b1b",
 
     borderWidth: 1,
 
     flexDirection: "row",
 
-    borderColor: "#c0392b",
+    borderColor: "#991b1b",
 
     alignItems: "center",
 
@@ -5033,7 +4953,7 @@ const styles = StyleSheet.create({
 
     borderTopWidth: 1,
 
-    borderTopColor: "#f1f5f9",
+    borderTopColor: "#334155",
   },
 
   deviceRowIcon: {
@@ -5043,7 +4963,7 @@ const styles = StyleSheet.create({
 
     borderRadius: 12,
 
-    backgroundColor: "#eff6ff",
+    backgroundColor: "#312e81",
 
     alignItems: "center",
 
@@ -5063,7 +4983,7 @@ const styles = StyleSheet.create({
 
     fontWeight: "700",
 
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   deviceRowIp: {
@@ -5071,7 +4991,7 @@ const styles = StyleSheet.create({
 
     fontSize: 13,
 
-    color: "#475569",
+    color: "#94a3b8",
   },
 
   deviceRowPort: {
@@ -5079,7 +4999,7 @@ const styles = StyleSheet.create({
 
     fontSize: 11,
 
-    color: "#94a3b8",
+    color: "#64748b",
   },
 
   trustedDescription: {
@@ -5087,7 +5007,7 @@ const styles = StyleSheet.create({
 
     lineHeight: 21,
 
-    color: "#64748b",
+    color: "#94a3b8",
 
     marginBottom: 14,
   },
@@ -5097,11 +5017,11 @@ const styles = StyleSheet.create({
 
     borderRadius: 11,
 
-    backgroundColor: "#fef2f2",
+    backgroundColor: "#450a0a",
 
     borderWidth: 1,
 
-    borderColor: "#fecaca",
+    borderColor: "#7f1d1d",
 
     flexDirection: "row",
 
@@ -5125,11 +5045,11 @@ const styles = StyleSheet.create({
 
     borderRadius: 13,
 
-    backgroundColor: "#eff6ff",
+    backgroundColor: "#312e81",
 
     borderWidth: 1,
 
-    borderColor: "#bfdbfe",
+    borderColor: "#4338ca",
 
     flexDirection: "row",
 
@@ -5141,7 +5061,7 @@ const styles = StyleSheet.create({
   },
 
   fileButtonText: {
-    color: "#2563eb",
+    color: "#818cf8",
 
     fontSize: 15,
 
@@ -5153,7 +5073,7 @@ const styles = StyleSheet.create({
   },
 
   transferItem: {
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0f172a",
 
     borderRadius: 13,
 
@@ -5163,7 +5083,7 @@ const styles = StyleSheet.create({
 
     borderWidth: 1,
 
-    borderColor: "#e2e8f0",
+    borderColor: "#334155",
   },
 
   transferTop: {
@@ -5187,7 +5107,7 @@ const styles = StyleSheet.create({
 
     fontWeight: "700",
 
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   transferSize: {
@@ -5195,7 +5115,7 @@ const styles = StyleSheet.create({
 
     fontSize: 11,
 
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   progressText: {
@@ -5203,13 +5123,13 @@ const styles = StyleSheet.create({
 
     fontWeight: "800",
 
-    color: "#2563eb",
+    color: "#818cf8",
   },
 
   progressBackground: {
     height: 7,
 
-    backgroundColor: "#e2e8f0",
+    backgroundColor: "#334155",
 
     borderRadius: 10,
 
@@ -5221,7 +5141,7 @@ const styles = StyleSheet.create({
   progressBar: {
     height: "100%",
 
-    backgroundColor: "#2563eb",
+    backgroundColor: "#4f46e5",
 
     borderRadius: 10,
   },
@@ -5231,7 +5151,7 @@ const styles = StyleSheet.create({
 
     fontSize: 11,
 
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   toolsRow: {
@@ -5249,11 +5169,11 @@ const styles = StyleSheet.create({
 
     borderRadius: 12,
 
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0f172a",
 
     borderWidth: 1,
 
-    borderColor: "#e2e8f0",
+    borderColor: "#334155",
 
     alignItems: "center",
 
@@ -5265,7 +5185,7 @@ const styles = StyleSheet.create({
   },
 
   toolText: {
-    color: "#334155",
+    color: "#cbd5e1",
 
     fontWeight: "700",
 
@@ -5277,7 +5197,11 @@ const styles = StyleSheet.create({
 
     alignItems: "center",
 
-    backgroundColor: "#eff6ff",
+    backgroundColor: "#1e293b",
+
+    borderWidth: 1,
+
+    borderColor: "#334155",
 
     borderRadius: 13,
 
@@ -5295,6 +5219,6 @@ const styles = StyleSheet.create({
 
     lineHeight: 19,
 
-    color: "#475569",
+    color: "#94a3b8",
   },
 })

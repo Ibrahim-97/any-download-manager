@@ -223,6 +223,8 @@ export default function UsbSyncScreen() {
   const [databaseProgress, setDatabaseProgress] = useState(0)
 
   const [databaseSyncSuccess, setDatabaseSyncSuccess] = useState(false)
+  const [caseFilesSyncSuccess,setCaseFilesSyncSuccess] = useState(false)
+  
 
   // ==========================================================
   // FILES
@@ -287,6 +289,15 @@ export default function UsbSyncScreen() {
   const reconnectTimerRef = useRef(null)
   const manualDisconnectRef = useRef(false)
   const reconnectAttemptRef = useRef(0)
+  const caseFilesSyncRunningRef = useRef(false)
+
+  const caseFilesSyncRequestRef = useRef(null)
+
+  const caseFilesSyncGenerationRef = useRef(0)
+
+  const caseFilesPendingUploadsRef = useRef(new Map())
+
+  const caseFilesCompletedUploadsRef = useRef(new Set())
 
   // ==========================================================
   // LOAD DEVICE ID
@@ -959,17 +970,17 @@ export default function UsbSyncScreen() {
          * لا يتم إنشاء نظام مزامنة جديد.
          */
 
-        setTimeout(() => {
-          if (
-            mountedRef.current &&
-            connectedRef.current &&
-            trustedRef.current
-          ) {
-            if (syncDatabaseFilesRef.current) {
-              syncDatabaseFilesRef.current()
-            }
-          }
-        }, 300)
+        // setTimeout(() => {
+        //   if (
+        //     mountedRef.current &&
+        //     connectedRef.current &&
+        //     trustedRef.current
+        //   ) {
+        //     if (syncDatabaseFilesRef.current) {
+        //       syncDatabaseFilesRef.current()
+        //     }
+        //   }
+        // }, 300)
       } catch (error) {
         console.log("USB DATABASE_SYNC_COMPLETE ERROR:", error)
 
@@ -2212,129 +2223,129 @@ export default function UsbSyncScreen() {
   // -> DELETE sync_files
   // ==========================================================
 
-  const syncDatabaseFiles = useCallback(async () => {
-    console.log("=== USB DATABASE FILE AUTO SYNC START ===")
+  // const syncDatabaseFiles = useCallback(async () => {
+  //   console.log("=== USB DATABASE FILE AUTO SYNC START ===")
 
-    if (!connectedRef.current) {
-      console.log("USB AUTO SYNC STOP: NO CONNECTED DEVICE")
+  //   if (!connectedRef.current) {
+  //     console.log("USB AUTO SYNC STOP: NO CONNECTED DEVICE")
 
-      return
-    }
+  //     return
+  //   }
 
-    if (!trustedRef.current) {
-      console.log("USB AUTO SYNC STOP: DEVICE NOT TRUSTED")
+  //   if (!trustedRef.current) {
+  //     console.log("USB AUTO SYNC STOP: DEVICE NOT TRUSTED")
 
-      return
-    }
+  //     return
+  //   }
 
-    if (autoSyncStartedRef.current) {
-      console.log("USB AUTO SYNC STOP: ALREADY RUNNING")
+  //   if (autoSyncStartedRef.current) {
+  //     console.log("USB AUTO SYNC STOP: ALREADY RUNNING")
 
-      return
-    }
+  //     return
+  //   }
 
-    autoSyncStartedRef.current = true
+  //   autoSyncStartedRef.current = true
 
-    setFileSyncing(true)
+  //   setFileSyncing(true)
 
-    try {
-      console.log("USB AUTO SYNC: LOADING sync_files...")
+  //   try {
+  //     console.log("USB AUTO SYNC: LOADING sync_files...")
 
-      const files = await db.select().from(schema.syncFiles)
+  //     const files = await db.select().from(schema.syncFiles)
 
-      console.log("USB AUTO SYNC FILES:", files)
+  //     console.log("USB AUTO SYNC FILES:", files)
 
-      if (files.length === 0) {
-        console.log("USB AUTO SYNC: sync_files IS EMPTY")
+  //     if (files.length === 0) {
+  //       console.log("USB AUTO SYNC: sync_files IS EMPTY")
 
-        return
-      }
+  //       return
+  //     }
 
-      autoSyncQueueRef.current = files.slice()
+  //     autoSyncQueueRef.current = files.slice()
 
-      for (const file of files) {
-        if (!connectedRef.current || !trustedRef.current) {
-          console.log("USB AUTO SYNC STOP: CONNECTION LOST")
+  //     for (const file of files) {
+  //       if (!connectedRef.current || !trustedRef.current) {
+  //         console.log("USB AUTO SYNC STOP: CONNECTION LOST")
 
-          break
-        }
+  //         break
+  //       }
 
-        if (!file?.uri) {
-          console.warn("USB AUTO SYNC SKIP: URI MISSING", file)
+  //       if (!file?.uri) {
+  //         console.warn("USB AUTO SYNC SKIP: URI MISSING", file)
 
-          continue
-        }
+  //         continue
+  //       }
 
-        if (autoSyncFilesRef.current.has(file.id)) {
-          console.log("USB AUTO SYNC SKIP: ALREADY SENT", file.id)
+  //       if (autoSyncFilesRef.current.has(file.id)) {
+  //         console.log("USB AUTO SYNC SKIP: ALREADY SENT", file.id)
 
-          continue
-        }
+  //         continue
+  //       }
 
-        autoSyncFilesRef.current.add(file.id)
+  //       autoSyncFilesRef.current.add(file.id)
 
-        console.log("USB AUTO SYNC SENDING:", {
-          id: file.id,
+  //       console.log("USB AUTO SYNC SENDING:", {
+  //         id: file.id,
 
-          fileName: file.fileName,
+  //         fileName: file.fileName,
 
-          uri: file.uri,
+  //         uri: file.uri,
 
-          size: file.size,
+  //         size: file.size,
 
-          relativePath: file.relativePath,
+  //         relativePath: file.relativePath,
 
-          entityType: file.entityType,
+  //         entityType: file.entityType,
 
-          entityId: file.entityId,
-        })
+  //         entityId: file.entityId,
+  //       })
 
-        try {
-          const result = await sendDatabaseFile(file)
+  //       try {
+  //         const result = await sendDatabaseFile(file)
 
-          if (!result?.requestId || !result?.completionPromise) {
-            throw new Error("FILE_REQUEST_FAILED")
-          }
+  //         if (!result?.requestId || !result?.completionPromise) {
+  //           throw new Error("FILE_REQUEST_FAILED")
+  //         }
 
-          autoSyncCurrentRef.current = result.requestId
+  //         autoSyncCurrentRef.current = result.requestId
 
-          await result.completionPromise
+  //         await result.completionPromise
 
-          console.log("USB AUTO SYNC COMPLETED:", file.fileName)
-        } catch (error) {
-          console.log("USB AUTO SYNC FILE ERROR:", file.fileName, error)
+  //         console.log("USB AUTO SYNC COMPLETED:", file.fileName)
+  //       } catch (error) {
+  //         console.log("USB AUTO SYNC FILE ERROR:", file.fileName, error)
 
-          autoSyncFilesRef.current.delete(file.id)
+  //         autoSyncFilesRef.current.delete(file.id)
 
-          autoSyncCurrentRef.current = null
+  //         autoSyncCurrentRef.current = null
 
-          if (error?.message === "CONNECTION_CLOSED") {
-            console.log("USB AUTO SYNC STOPPED: CONNECTION_CLOSED")
+  //         if (error?.message === "CONNECTION_CLOSED") {
+  //           console.log("USB AUTO SYNC STOPPED: CONNECTION_CLOSED")
 
-            break
-          }
-        }
+  //           break
+  //         }
+  //       }
 
-        await new Promise(resolve => setTimeout(resolve, 150))
-      }
-    } catch (error) {
-      console.log("USB DATABASE FILE AUTO SYNC ERROR:", error)
-    } finally {
-      autoSyncStartedRef.current = false
+  //       await new Promise(resolve => setTimeout(resolve, 150))
+  //     }
+  //   } catch (error) {
+  //     console.log("USB DATABASE FILE AUTO SYNC ERROR:", error)
+  //   } finally {
+  //     autoSyncStartedRef.current = false
 
-      autoSyncCurrentRef.current = null
+  //     autoSyncCurrentRef.current = null
 
-      autoSyncQueueRef.current = []
+  //     autoSyncQueueRef.current = []
 
-      setFileSyncing(false)
+  //     setFileSyncing(false)
 
-      console.log("=== USB DATABASE FILE AUTO SYNC FINISHED ===")
-    }
-  }, [db, sendDatabaseFile])
+  //     console.log("=== USB DATABASE FILE AUTO SYNC FINISHED ===")
+  //   }
+  // }, [db, sendDatabaseFile])
 
-  useEffect(() => {
-    syncDatabaseFilesRef.current = syncDatabaseFiles
-  }, [syncDatabaseFiles])
+  // useEffect(() => {
+  //   syncDatabaseFilesRef.current = syncDatabaseFiles
+  // }, [syncDatabaseFiles])
 
   // ==========================================================
   // HANDLE MESSAGE
@@ -2446,6 +2457,40 @@ export default function UsbSyncScreen() {
 
         return
       }
+
+      
+if (type === "CASE_FILES_SYNC_COMPLETE") {
+  const payload = message?.payload || {}
+
+  console.log("========================================")
+  console.log("USB CASE FILES SYNC COMPLETE:", payload)
+  console.log("========================================")
+
+  caseFilesSyncRunningRef.current = false
+  caseFilesSyncRequestRef.current = null
+
+  if (payload?.success === false) {
+    setUsbError(
+      payload?.error ||
+        payload?.message ||
+        "فشلت مزامنة ملفات القضايا.",
+    )
+
+    return
+  }
+
+  setCaseFilesSyncSuccess(true)
+  setUsbError("")
+
+  setTimeout(() => {
+    if (mountedRef.current) {
+      setCaseFilesSyncSuccess(false)
+    }
+  }, 4000)
+
+  return
+}
+
 
       // ======================================================
       // PAIR_CODE
@@ -2582,6 +2627,30 @@ export default function UsbSyncScreen() {
             timestamp: Date.now(),
           },
         })
+
+        return
+      }
+
+      // ======================================================
+      // CASE_FILES_UPLOAD_REQUESTS
+      // PC -> ANDROID
+      // Android must upload remoteOnly case files
+      // ======================================================
+
+      if (type === "CASE_FILES_UPLOAD_REQUESTS") {
+        const requests = payload?.requests || message?.requests || []
+
+        console.log("========================================")
+
+        console.log("USB CASE_FILES_UPLOAD_REQUESTS RECEIVED:", {
+          count: Array.isArray(requests) ? requests.length : 0,
+
+          requests,
+        })
+
+        console.log("========================================")
+
+        await handleCaseFilesUploadRequests(requests)
 
         return
       }
@@ -2739,7 +2808,8 @@ export default function UsbSyncScreen() {
 
               error: error?.message || String(error),
 
-              direction: "PC_TO_ANDROID",
+              direction: pendingFile?.direction || "PC_TO_ANDROID",
+              caseFileSync: pendingFile?.caseFileSync === true,
             },
           })
         })
@@ -3070,6 +3140,7 @@ export default function UsbSyncScreen() {
       setTransfer,
       startDatabaseSync,
       updateTransfer,
+      handleCaseFilesUploadRequests,
     ],
   )
 
@@ -3746,8 +3817,13 @@ export default function UsbSyncScreen() {
       startDatabaseSync()
     }, 600)
 
+    const casedb = setTimeout(() => {
+      startCaseFilesSync()
+    }, 600)
+
     return () => {
       clearTimeout(timer)
+      clearTimeout(casedb)
     }
   }, [usbConnected, trusted, startDatabaseSync])
 
@@ -3758,9 +3834,9 @@ export default function UsbSyncScreen() {
   // يوجد أيضًا حماية داخلية لمنع التكرار.
   // ==========================================================
 
-  useEffect(() => {
-    syncDatabaseFilesRef.current = syncDatabaseFiles
-  }, [syncDatabaseFiles])
+  // useEffect(() => {
+  //   syncDatabaseFilesRef.current = syncDatabaseFiles
+  // }, [syncDatabaseFiles])
 
   // ==========================================================
   // CLEANUP
@@ -3848,6 +3924,412 @@ export default function UsbSyncScreen() {
     )} ${units[safeIndex]}`
   }
 
+  function isSafeCaseFileRelativePath(value) {
+    if (!value) {
+      return false
+    }
+
+    const normalized = normalizeRelativePath(value)
+
+    if (!normalized) {
+      return false
+    }
+
+    const parts = normalized.split("/")
+
+    if (parts.length !== 2) {
+      return false
+    }
+
+    if (!parts[0] || !parts[1]) {
+      return false
+    }
+
+    if (
+      parts[0] === "." ||
+      parts[0] === ".." ||
+      parts[1] === "." ||
+      parts[1] === ".."
+    ) {
+      return false
+    }
+
+    return true
+  }
+
+  function extractCaseFileEntityId(relativePath) {
+    const normalized = normalizeRelativePath(relativePath)
+
+    if (!isSafeCaseFileRelativePath(normalized)) {
+      return null
+    }
+
+    return normalized.split("/")[0]
+  }
+
+  function extractCaseFileName(relativePath) {
+    const normalized = normalizeRelativePath(relativePath)
+
+    if (!isSafeCaseFileRelativePath(normalized)) {
+      return null
+    }
+
+    return normalized.split("/")[1]
+  }
+
+  const buildCaseFilesManifest = useCallback(async () => {
+    const root = `${FileSystem.documentDirectory}documents/`
+
+    const files = []
+
+    const rootInfo = await getFileInfoSafe(root)
+
+    if (!rootInfo?.exists) {
+      return {
+        generatedAt: new Date().toISOString(),
+        total: 0,
+        files: [],
+      }
+    }
+
+    /*
+     * نحتاج قراءة مجلد documents.
+     *
+     * FileSystem.readDirectoryAsync يعطي أسماء
+     * المجلدات والملفات.
+     */
+    const entityIds = await FileSystem.readDirectoryAsync(root)
+
+    for (const entityId of entityIds) {
+      const safeEntityId = sanitizePathPart(entityId, "")
+
+      if (!safeEntityId) {
+        continue
+      }
+
+      const entityDirectory = `${root}${safeEntityId}/`
+
+      const entityInfo = await getFileInfoSafe(entityDirectory)
+
+      if (!entityInfo?.exists || entityInfo.isDirectory !== true) {
+        continue
+      }
+
+      const names = await FileSystem.readDirectoryAsync(entityDirectory)
+
+      for (const fileName of names) {
+        const safeFileName = sanitizePathPart(fileName, "")
+
+        if (!safeFileName) {
+          continue
+        }
+
+        const relativePath = `${safeEntityId}/${safeFileName}`
+
+        if (!isSafeCaseFileRelativePath(relativePath)) {
+          continue
+        }
+
+        const uri = `${entityDirectory}${safeFileName}`
+
+        const info = await getFileInfoSafe(uri)
+
+        if (!info?.exists || info.isDirectory === true) {
+          continue
+        }
+
+        files.push({
+          relativePath,
+
+          entityId: safeEntityId,
+
+          fileName: safeFileName,
+
+          size: Number(info.size || 0),
+
+          sha256: null,
+
+          mimeType: "application/octet-stream",
+        })
+      }
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+
+      total: files.length,
+
+      files,
+    }
+  }, [])
+
+  const startCaseFilesSync = useCallback(async () => {
+    if (!connectedRef.current) {
+      console.log("USB CASE FILES SYNC SKIPPED: NO CONNECTION")
+
+      return
+    }
+
+    if (!trustedRef.current) {
+      console.log("USB CASE FILES SYNC SKIPPED: NOT TRUSTED")
+
+      return
+    }
+
+    if (caseFilesSyncRunningRef.current) {
+      console.log("USB CASE FILES SYNC SKIPPED: ALREADY RUNNING")
+
+      return
+    }
+
+    caseFilesSyncRunningRef.current = true
+
+    const generation = ++caseFilesSyncGenerationRef.current
+
+    const requestId = createRequestId()
+
+    try {
+      const manifest = await buildCaseFilesManifest()
+
+      if (generation !== caseFilesSyncGenerationRef.current) {
+        caseFilesSyncRunningRef.current = false
+        return
+      }
+
+      caseFilesSyncRequestRef.current = {
+        requestId,
+        startedAt: Date.now(),
+      }
+
+      console.log("========================================")
+
+      console.log("USB CASE FILES SYNC REQUEST:", {
+        requestId,
+        total: manifest.total,
+      })
+
+      console.log("========================================")
+
+      const success = send({
+        type: "CASE_FILES_SYNC_REQUEST",
+
+        version: 1,
+
+        requestId,
+
+        timestamp: Date.now(),
+
+        payload: {
+          requestId,
+
+          manifest,
+
+          transport: "usb",
+        },
+      })
+
+      if (!success) {
+        throw new Error("CASE_FILES_SYNC_REQUEST_SEND_FAILED")
+      }
+    } catch (error) {
+      console.error("USB CASE FILES SYNC START ERROR:", error)
+
+      caseFilesSyncRequestRef.current = null
+
+      caseFilesSyncRunningRef.current = false
+
+      setUsbError(error?.message || "فشل بدء مزامنة ملفات القضايا.")
+    }
+  }, [buildCaseFilesManifest, send])
+
+  const handleCaseFilesUploadRequests = useCallback(
+    async requests => {
+      if (!Array.isArray(requests) || requests.length === 0) {
+        console.log("USB CASE FILES UPLOAD REQUESTS: EMPTY")
+
+        return
+      }
+
+      for (const request of requests) {
+        try {
+          const relativePath = normalizeRelativePath(request?.relativePath)
+
+          if (!isSafeCaseFileRelativePath(relativePath)) {
+            console.error(
+              "USB CASE FILE REQUEST: INVALID RELATIVE PATH",
+              request,
+            )
+
+            continue
+          }
+
+          const pathEntityId = extractCaseFileEntityId(relativePath)
+
+          const fileName = extractCaseFileName(relativePath)
+
+          const entityId = request?.entityId || pathEntityId
+
+          if (String(entityId) !== String(pathEntityId)) {
+            console.error("USB CASE FILE REQUEST: ENTITY ID MISMATCH", {
+              entityId,
+              pathEntityId,
+              relativePath,
+            })
+
+            continue
+          }
+
+          const fileUri = `${FileSystem.documentDirectory}documents/${pathEntityId}/${fileName}`
+
+          const info = await getFileInfoSafe(fileUri)
+
+          if (!info?.exists || info.isDirectory === true) {
+            console.error("USB CASE FILE REQUEST: FILE NOT FOUND", {
+              relativePath,
+              fileUri,
+            })
+
+            continue
+          }
+
+          const fileSize = Number(info.size || 0)
+
+          const requestId = createRequestId()
+
+          const pendingFile = {
+            requestId,
+
+            transferId: null,
+
+            uri: fileUri,
+
+            name: fileName,
+
+            fileName,
+
+            size: fileSize,
+
+            mimeType: request?.mimeType || "application/octet-stream",
+
+            relativePath,
+
+            entityType: request?.entityType || "case",
+
+            entityId: pathEntityId,
+
+            syncFileId: null,
+
+            caseFileSync: true,
+
+            databaseFile: false,
+
+            direction: "ANDROID_TO_PC",
+          }
+
+          caseFilesPendingUploadsRef.current.set(requestId, pendingFile)
+
+          pendingFilesRef.current.set(requestId, pendingFile)
+
+          setTransfers(previous => [
+            ...previous,
+
+            {
+              id: requestId,
+
+              requestId,
+
+              transferId: null,
+
+              fileName,
+
+              total: fileSize,
+
+              transferred: 0,
+
+              progress: 0,
+
+              status: "waiting",
+
+              direction: "ANDROID_TO_PC",
+
+              relativePath,
+
+              entityType: pendingFile.entityType,
+
+              entityId: pathEntityId,
+
+              caseFileSync: true,
+            },
+          ])
+
+          console.log("========================================")
+
+          console.log("USB CASE FILE UPLOAD REQUEST PREPARED:", {
+            requestId,
+
+            fileName,
+
+            fileSize,
+
+            fileUri,
+
+            relativePath,
+
+            entityId: pathEntityId,
+          })
+
+          console.log("========================================")
+
+          const success = send({
+            type: "FILE_REQUEST",
+
+            version: 1,
+
+            requestId,
+
+            timestamp: Date.now(),
+
+            payload: {
+              requestId,
+
+              fileName,
+
+              fileSize,
+
+              mimeType: pendingFile.mimeType,
+
+              relativePath,
+
+              entityType: pendingFile.entityType,
+
+              entityId: pathEntityId,
+
+              caseFileSync: true,
+            },
+          })
+
+          if (!success) {
+            throw new Error("CASE_FILE_FILE_REQUEST_SEND_FAILED")
+          }
+
+          console.log("USB CASE FILE FILE_REQUEST SENT:", {
+            requestId,
+
+            relativePath,
+
+            entityId: pathEntityId,
+          })
+        } catch (error) {
+          console.error("USB CASE FILE UPLOAD REQUEST ERROR:", {
+            request,
+            error: error?.message || String(error),
+          })
+        }
+      }
+    },
+    [send],
+  )
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: "#0f172a" }}
@@ -3888,7 +4370,7 @@ export default function UsbSyncScreen() {
               style={[
                 styles.statusBadge,
                 {
-                  backgroundColor: usbConnected ? "#064e3b" : "#334155",
+                  backgroundColor: usbConnected ? "#2c3e50" : "#34495e",
                 },
               ]}
             >
@@ -3951,7 +4433,7 @@ export default function UsbSyncScreen() {
             <Pressable
               style={styles.primaryButton}
               onPress={connectUsb}
-              disabled={usbStatus === "connecting"}
+              // disabled={usbStatus === "connecting"}
             >
               {usbStatus === "connecting" ? (
                 <ActivityIndicator size="small" color="#fff" />
@@ -3966,15 +4448,14 @@ export default function UsbSyncScreen() {
               </Text>
             </Pressable>
           ) : (
-            <View>
-              <Pressable
-                style={styles.disconnectButton}
-                onPress={disconnectUsb}
-              >
-                <MaterialIcons name="link-off" size={21} color="#fff" />
+            <View style={{
+    flexDirection: "row",
 
-                <Text style={styles.forgetButtonText}>قطع الاتصال</Text>
-              </Pressable>
+    alignItems: "center",
+
+    gap: 8,
+  }}>
+             
               {trusted ? (
                 <Pressable
                   style={styles.unpairButton}
@@ -3989,7 +4470,19 @@ export default function UsbSyncScreen() {
 
                   <Text style={styles.unpairText}>إلغاء الاقتران</Text>
                 </Pressable>
-              ) : null}
+              ) : (<Pressable style={styles.primaryButton}  onPress={sendPairRequest} >
+                <MaterialIcons name="link" size={22} color="#fff" />
+
+                <Text style={styles.primaryButtonText}>طلب الاقتران</Text>
+              </Pressable>)}
+               <Pressable
+                style={styles.disconnectButton}
+                onPress={disconnectUsb}
+              >
+                <MaterialIcons name="link-off" size={21} color="#fff" />
+
+                <Text style={styles.forgetButtonText}>قطع الاتصال</Text>
+              </Pressable>
             </View>
           )}
         </View>
@@ -3999,14 +4492,14 @@ export default function UsbSyncScreen() {
         {/* ================================================== */}
 
         {usbConnected && !trusted ? (
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>الاقتران</Text>
+          <View >
+            {/* <Text style={styles.cardTitle}>الاقتران</Text>
 
             <Text style={styles.description}>
               يجب إقران الهاتف بالكمبيوتر قبل بدء المزامنة.
-            </Text>
+            </Text> */}
 
-            {pairingState === "code_received" ? (
+            {pairingState === "code_received" && (
               <View>
                 <Text style={styles.label}>كود الاقتران</Text>
 
@@ -4036,13 +4529,7 @@ export default function UsbSyncScreen() {
                   <Text style={styles.primaryButtonText}>تأكيد الاقتران</Text>
                 </Pressable>
               </View>
-            ) : (
-              <Pressable style={styles.primaryButton} onPress={sendPairRequest}>
-                <MaterialIcons name="link" size={22} color="#fff" />
-
-                <Text style={styles.primaryButtonText}>طلب الاقتران</Text>
-              </Pressable>
-            )}
+            ) }
           </View>
         ) : null}
 
@@ -4059,6 +4546,21 @@ export default function UsbSyncScreen() {
             </Text>
           </View>
         ) : null}
+      
+{caseFilesSyncSuccess ? (
+  <View style={styles.successBox}>
+    <MaterialIcons
+      name="check-circle"
+      size={24}
+      color="#16a34a"
+    />
+
+    <Text style={styles.successText}>
+      تمت مزامنة ملفات القضايا بنجاح
+    </Text>
+  </View>
+) : null}
+
 
         {/* ================================================== */}
         {/* FILES */}
@@ -4510,6 +5012,7 @@ const styles = StyleSheet.create({
   },
 
   primaryButton: {
+    flex: 1,
     minHeight: 48,
     borderRadius: 12,
     backgroundColor: "#4f46e5",
@@ -4537,6 +5040,7 @@ const styles = StyleSheet.create({
   },
 
   disconnectButton: {
+    flex: 1,
     minHeight: 48,
     borderRadius: 12,
     backgroundColor: "#991b1b",
@@ -4620,6 +5124,7 @@ const styles = StyleSheet.create({
   },
 
   unpairButton: {
+    flex: 1,
     minHeight: 48,
     borderRadius: 12,
     backgroundColor: "#450a0a",

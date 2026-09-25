@@ -3,7 +3,9 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -117,7 +119,7 @@ function parseIncomingMessage(incoming) {
   try {
     return JSON.parse(raw)
   } catch (error) {
-    console.error("USB JSON PARSE ERROR:", error)
+    console.log("USB JSON PARSE ERROR:", error)
 
     return null
   }
@@ -306,7 +308,7 @@ export default function UsbSyncScreen() {
 
       return id
     } catch (error) {
-      console.error("USB DEVICE ID ERROR:", error)
+      console.log("USB DEVICE ID ERROR:", error)
 
       const fallback = createDeviceId()
 
@@ -332,7 +334,7 @@ export default function UsbSyncScreen() {
 
       return JSON.parse(raw)
     } catch (error) {
-      console.error("LOAD TRUSTED USB ERROR:", error)
+      console.log("LOAD TRUSTED USB ERROR:", error)
 
       return null
     }
@@ -360,7 +362,7 @@ export default function UsbSyncScreen() {
     try {
       await AsyncStorage.setItem(TRUSTED_USB_KEY, JSON.stringify(normalized))
     } catch (error) {
-      console.error("SAVE TRUSTED USB ERROR:", error)
+      console.log("SAVE TRUSTED USB ERROR:", error)
     }
   }, [])
 
@@ -378,7 +380,7 @@ export default function UsbSyncScreen() {
 
       return result !== false
     } catch (error) {
-      console.error("USB SEND ERROR:", error)
+      console.log("USB SEND ERROR:", error)
 
       setUsbError(error?.message || "فشل إرسال الرسالة.")
 
@@ -720,7 +722,7 @@ export default function UsbSyncScreen() {
         throw new Error("DATABASE_SYNC_REQUEST_SEND_FAILED")
       }
     } catch (error) {
-      console.error("USB DATABASE SYNC START ERROR:", error)
+      console.log("USB DATABASE SYNC START ERROR:", error)
 
       databaseSyncRequestRef.current = null
 
@@ -839,7 +841,7 @@ export default function UsbSyncScreen() {
 
         console.log("USB DATABASE_SYNC_APPLIED SENT")
       } catch (error) {
-        console.error("USB WINDOWS -> ANDROID APPLY ERROR:", error)
+        console.log("USB WINDOWS -> ANDROID APPLY ERROR:", error)
 
         send({
           type: "DATABASE_SYNC_APPLIED",
@@ -969,7 +971,7 @@ export default function UsbSyncScreen() {
           }
         }, 300)
       } catch (error) {
-        console.error("USB DATABASE_SYNC_COMPLETE ERROR:", error)
+        console.log("USB DATABASE_SYNC_COMPLETE ERROR:", error)
 
         databaseSyncRequestRef.current = null
 
@@ -1669,7 +1671,7 @@ export default function UsbSyncScreen() {
 
         if (result && typeof result.then === "function") {
           result.catch(error => {
-            console.error("USB ASYNC DOWNLOAD ERROR:", error)
+            console.log("USB ASYNC DOWNLOAD ERROR:", error)
 
             markTransferError(
               requestId,
@@ -1679,7 +1681,7 @@ export default function UsbSyncScreen() {
           })
         }
       } catch (error) {
-        console.error("USB DOWNLOAD FILE ERROR:", error)
+        console.log("USB DOWNLOAD FILE ERROR:", error)
 
         throw error
       }
@@ -1731,7 +1733,7 @@ export default function UsbSyncScreen() {
       const errorMessage =
         error?.message || error || "فشل استقبال الملف من الكمبيوتر."
 
-      console.error("USB PC -> ANDROID FILE ERROR:", {
+      console.log("USB PC -> ANDROID FILE ERROR:", {
         requestId,
 
         transferId,
@@ -1835,13 +1837,13 @@ export default function UsbSyncScreen() {
             if (afterDelete.length === 0) {
               console.log("USB SYNC FILE SUCCESSFULLY DELETED:", syncFileId)
             } else {
-              console.error("USB SYNC FILE STILL EXISTS:", syncFileId)
+              console.log("USB SYNC FILE STILL EXISTS:", syncFileId)
             }
           } else {
             console.warn("USB SYNC FILE NOT FOUND BEFORE DELETE:", syncFileId)
           }
         } catch (error) {
-          console.error("USB DELETE sync_files ERROR:", error)
+          console.log("USB DELETE sync_files ERROR:", error)
 
           /*
            * لا نعتبر النقل فاشلًا.
@@ -2184,7 +2186,7 @@ export default function UsbSyncScreen() {
           completionPromise,
         }
       } catch (error) {
-        console.error("USB DATABASE FILE REQUEST ERROR:", error)
+        console.log("USB DATABASE FILE REQUEST ERROR:", error)
 
         autoSyncWaitersRef.current.delete(requestId)
 
@@ -2300,7 +2302,7 @@ export default function UsbSyncScreen() {
 
           console.log("USB AUTO SYNC COMPLETED:", file.fileName)
         } catch (error) {
-          console.error("USB AUTO SYNC FILE ERROR:", file.fileName, error)
+          console.log("USB AUTO SYNC FILE ERROR:", file.fileName, error)
 
           autoSyncFilesRef.current.delete(file.id)
 
@@ -2316,7 +2318,7 @@ export default function UsbSyncScreen() {
         await new Promise(resolve => setTimeout(resolve, 150))
       }
     } catch (error) {
-      console.error("USB DATABASE FILE AUTO SYNC ERROR:", error)
+      console.log("USB DATABASE FILE AUTO SYNC ERROR:", error)
     } finally {
       autoSyncStartedRef.current = false
 
@@ -2534,7 +2536,7 @@ export default function UsbSyncScreen() {
       // ======================================================
 
       if (type === "DATABASE_SYNC_ERROR") {
-        console.error("USB DATABASE SYNC ERROR:", payload)
+        console.log("USB DATABASE SYNC ERROR:", payload)
 
         databaseSyncRunningRef.current = false
 
@@ -2635,7 +2637,7 @@ export default function UsbSyncScreen() {
         console.log("========================================")
 
         if (!trustedRef.current) {
-          console.error("USB FILE_SEND_REQUEST REJECTED: DEVICE_NOT_TRUSTED")
+          console.log("USB FILE_SEND_REQUEST REJECTED: DEVICE_NOT_TRUSTED")
 
           send({
             type: "FILE_REJECT",
@@ -2663,19 +2665,19 @@ export default function UsbSyncScreen() {
         }
 
         if (!requestId) {
-          console.error("USB FILE_SEND_REQUEST: REQUEST ID MISSING")
+          console.log("USB FILE_SEND_REQUEST: REQUEST ID MISSING")
 
           return
         }
 
         if (!transferId) {
-          console.error("USB FILE_SEND_REQUEST: TRANSFER ID MISSING")
+          console.log("USB FILE_SEND_REQUEST: TRANSFER ID MISSING")
 
           return
         }
 
         if (!Number.isFinite(fileSize) || fileSize < 0) {
-          console.error("USB FILE_SEND_REQUEST: INVALID FILE SIZE")
+          console.log("USB FILE_SEND_REQUEST: INVALID FILE SIZE")
 
           return
         }
@@ -2707,7 +2709,7 @@ export default function UsbSyncScreen() {
 
           syncFileId,
         }).catch(async error => {
-          console.error("USB PC -> ANDROID DOWNLOAD ERROR:", error)
+          console.log("USB PC -> ANDROID DOWNLOAD ERROR:", error)
 
           await handleIncomingFileError({
             requestId,
@@ -2762,13 +2764,13 @@ export default function UsbSyncScreen() {
         )
 
         if (!transferId) {
-          console.error("USB INVALID FILE_ACCEPT: TRANSFER ID MISSING")
+          console.log("USB INVALID FILE_ACCEPT: TRANSFER ID MISSING")
 
           return
         }
 
         if (!uploadUrl) {
-          console.error("USB INVALID FILE_ACCEPT: UPLOAD URL MISSING")
+          console.log("USB INVALID FILE_ACCEPT: UPLOAD URL MISSING")
 
           return
         }
@@ -2790,7 +2792,7 @@ export default function UsbSyncScreen() {
         }
 
         if (!pendingFile) {
-          console.error("USB PENDING FILE NOT FOUND:", {
+          console.log("USB PENDING FILE NOT FOUND:", {
             requestId,
 
             transferId,
@@ -2856,7 +2858,7 @@ export default function UsbSyncScreen() {
 
           if (result && typeof result.then === "function") {
             result.catch(error => {
-              console.error("USB ASYNC UPLOAD ERROR:", error)
+              console.log("USB ASYNC UPLOAD ERROR:", error)
 
               markTransferError(
                 resolvedRequestId,
@@ -2866,7 +2868,7 @@ export default function UsbSyncScreen() {
             })
           }
         } catch (error) {
-          console.error("USB UPLOAD FILE ERROR:", error)
+          console.log("USB UPLOAD FILE ERROR:", error)
 
           markTransferError(
             resolvedRequestId,
@@ -3021,7 +3023,7 @@ export default function UsbSyncScreen() {
           message?.error ||
           "فشل نقل الملف."
 
-        console.error("USB FILE ERROR:", {
+        console.log("USB FILE ERROR:", {
           requestId,
 
           transferId,
@@ -3075,175 +3077,165 @@ export default function UsbSyncScreen() {
   // HANDLE CONNECTION STATE
   // ==========================================================
 
-  const handleConnectionState = useCallback(event => {
-  console.log("USB FLOW CONNECTION STATE:", event)
+  const handleConnectionState = useCallback(
+    event => {
+      console.log("USB FLOW CONNECTION STATE:", event)
 
-  const connected = Boolean(event?.connected)
+      const connected = Boolean(event?.connected)
 
-  if (connected) {
-    console.log("USB FLOW: CONNECTION ESTABLISHED")
+      if (connected) {
+        console.log("USB FLOW: CONNECTION ESTABLISHED")
 
-    connectedRef.current = true
-    connectingRef.current = false
-    connectionOfflineRef.current = false
-    reconnectAttemptRef.current = 0
+        connectedRef.current = true
+        connectingRef.current = false
+        connectionOfflineRef.current = false
+        reconnectAttemptRef.current = 0
 
-    if (reconnectTimerRef.current) {
-      clearTimeout(reconnectTimerRef.current)
-      reconnectTimerRef.current = null
-    }
+        if (reconnectTimerRef.current) {
+          clearTimeout(reconnectTimerRef.current)
+          reconnectTimerRef.current = null
+        }
 
-    setUsbConnected(true)
-    setUsbStatus("connected")
-    setUsbError("")
+        setUsbConnected(true)
+        setUsbStatus("connected")
+        setUsbError("")
 
-    return
-  }
+        return
+      }
 
-  console.log("USB FLOW: CONNECTION LOST")
+      console.log("USB FLOW: CONNECTION LOST")
 
-  const wasConnected = connectedRef.current
+      const wasConnected = connectedRef.current
 
-  connectedRef.current = false
-  connectingRef.current = false
+      connectedRef.current = false
+      connectingRef.current = false
 
-  setUsbConnected(false)
+      setUsbConnected(false)
 
-  if (wasConnected) {
-    console.log(
-      "USB FLOW: REMOTE DISCONNECT - PC CLOSED OR SOCKET CLOSED"
-    )
+      if (wasConnected) {
+        console.log("USB FLOW: REMOTE DISCONNECT - PC CLOSED OR SOCKET CLOSED")
 
-    connectionOfflineRef.current = true
+        connectionOfflineRef.current = true
 
-    setUsbStatus("offline")
-    setUsbError("في انتظار تشغيل Avocato Desktop...")
+        setUsbStatus("offline")
+        setUsbError("في انتظار تشغيل Avocato Desktop...")
 
-    databaseSyncRunningRef.current = false
-    databaseSyncRequestRef.current = null
+        databaseSyncRunningRef.current = false
+        databaseSyncRequestRef.current = null
 
-    setDatabaseSyncing(false)
+        setDatabaseSyncing(false)
 
-    autoSyncStartedRef.current = false
-    autoSyncCurrentRef.current = null
+        autoSyncStartedRef.current = false
+        autoSyncCurrentRef.current = null
 
-    setFileSyncing(false)
+        setFileSyncing(false)
 
-    for (const [requestId, waiter] of autoSyncWaitersRef.current) {
-      try {
-        waiter.reject(new Error("CONNECTION_CLOSED"))
-      } catch (_) {}
-    }
+        for (const [requestId, waiter] of autoSyncWaitersRef.current) {
+          try {
+            waiter.reject(new Error("CONNECTION_CLOSED"))
+          } catch (_) {}
+        }
 
-    autoSyncWaitersRef.current.clear()
+        autoSyncWaitersRef.current.clear()
 
-    scheduleUsbReconnect()
+        scheduleUsbReconnect()
 
-    return
-  }
+        return
+      }
 
-  setUsbStatus("disconnected")
-}, [scheduleUsbReconnect])
+      setUsbStatus("disconnected")
+    },
+    [scheduleUsbReconnect],
+  )
   // ==========================================================
   // HANDLE CONNECTION ERROR
   // ==========================================================
 
-  const handleConnectionError = useCallback(event => {
-  const message = String(
-    event?.error?.message ||
-    event?.error ||
-    ""
+  const handleConnectionError = useCallback(
+    event => {
+      const message = String(event?.error?.message || event?.error || "")
+
+      console.log("USB FLOW CONNECTION ERROR:", message)
+
+      const wasConnected = connectedRef.current
+
+      const isExpectedSocketClose =
+        message.includes("WebSocket connection failed") ||
+        message.includes("WebSocket closed") ||
+        message.includes("socket closed") ||
+        message.includes("connection closed") ||
+        message.includes("ECONNRESET") ||
+        message.includes("ECONNABORTED") ||
+        message.includes("127.0.0.1:47822")
+
+      if (wasConnected || isExpectedSocketClose) {
+        console.log("USB FLOW: TREATING ERROR AS DISCONNECT")
+
+        connectionOfflineRef.current = true
+
+        connectedRef.current = false
+        connectingRef.current = false
+
+        setUsbConnected(false)
+        setUsbStatus("offline")
+
+        setUsbError(
+          "تم إغلاق الاتصال بالكمبيوتر. في انتظار تشغيل Avocato Desktop...",
+        )
+
+        databaseSyncRunningRef.current = false
+        databaseSyncRequestRef.current = null
+
+        setDatabaseSyncing(false)
+
+        autoSyncStartedRef.current = false
+        autoSyncCurrentRef.current = null
+
+        setFileSyncing(false)
+
+        for (const [requestId, waiter] of autoSyncWaitersRef.current) {
+          try {
+            waiter.reject(new Error("CONNECTION_CLOSED"))
+          } catch (_) {}
+        }
+
+        autoSyncWaitersRef.current.clear()
+
+        scheduleUsbReconnect()
+
+        return
+      }
+
+      console.log("USB CONNECTION REAL ERROR:", event)
+
+      connectionOfflineRef.current = false
+      connectingRef.current = false
+      connectedRef.current = false
+
+      setUsbConnected(false)
+      setUsbStatus("error")
+
+      setDatabaseSyncing(false)
+      setFileSyncing(false)
+
+      databaseSyncRunningRef.current = false
+      databaseSyncRequestRef.current = null
+
+      autoSyncStartedRef.current = false
+      autoSyncCurrentRef.current = null
+
+      for (const [requestId, waiter] of autoSyncWaitersRef.current) {
+        try {
+          waiter.reject(new Error("CONNECTION_CLOSED"))
+        } catch (_) {}
+      }
+
+      autoSyncWaitersRef.current.clear()
+
+      setUsbError(message || "تعذر الاتصال عبر USB.")
+    },
+    [scheduleUsbReconnect],
   )
-
-  console.log(
-    "USB FLOW CONNECTION ERROR:",
-    message
-  )
-
-  const wasConnected = connectedRef.current
-
-  const isExpectedSocketClose =
-    message.includes("WebSocket connection failed") ||
-    message.includes("WebSocket closed") ||
-    message.includes("socket closed") ||
-    message.includes("connection closed") ||
-    message.includes("ECONNRESET") ||
-    message.includes("ECONNABORTED") ||
-    message.includes("127.0.0.1:47822")
-
-  if (wasConnected || isExpectedSocketClose) {
-    console.log(
-      "USB FLOW: TREATING ERROR AS DISCONNECT"
-    )
-
-    connectionOfflineRef.current = true
-
-    connectedRef.current = false
-    connectingRef.current = false
-
-    setUsbConnected(false)
-    setUsbStatus("offline")
-
-    setUsbError(
-      "تم إغلاق الاتصال بالكمبيوتر. في انتظار تشغيل Avocato Desktop..."
-    )
-
-    databaseSyncRunningRef.current = false
-    databaseSyncRequestRef.current = null
-
-    setDatabaseSyncing(false)
-
-    autoSyncStartedRef.current = false
-    autoSyncCurrentRef.current = null
-
-    setFileSyncing(false)
-
-    for (const [requestId, waiter] of autoSyncWaitersRef.current) {
-      try {
-        waiter.reject(new Error("CONNECTION_CLOSED"))
-      } catch (_) {}
-    }
-
-    autoSyncWaitersRef.current.clear()
-
-    scheduleUsbReconnect()
-
-    return
-  }
-
-  console.error(
-    "USB CONNECTION REAL ERROR:",
-    event
-  )
-
-  connectionOfflineRef.current = false
-  connectingRef.current = false
-  connectedRef.current = false
-
-  setUsbConnected(false)
-  setUsbStatus("error")
-
-  setDatabaseSyncing(false)
-  setFileSyncing(false)
-
-  databaseSyncRunningRef.current = false
-  databaseSyncRequestRef.current = null
-
-  autoSyncStartedRef.current = false
-  autoSyncCurrentRef.current = null
-
-  for (const [requestId, waiter] of autoSyncWaitersRef.current) {
-    try {
-      waiter.reject(new Error("CONNECTION_CLOSED"))
-    } catch (_) {}
-  }
-
-  autoSyncWaitersRef.current.clear()
-
-  setUsbError(
-    message || "تعذر الاتصال عبر USB."
-  )
-}, [scheduleUsbReconnect])
 
   // ==========================================================
   // CONNECT USB
@@ -3319,7 +3311,7 @@ export default function UsbSyncScreen() {
         return
       }
 
-      console.error("USB CONNECT ERROR:", error)
+      console.log("USB CONNECT ERROR:", error)
 
       setUsbStatus("error")
 
@@ -3328,39 +3320,6 @@ export default function UsbSyncScreen() {
   }, [loadDeviceId, loadTrustedUsb])
 
   const scheduleUsbReconnect = useCallback(() => {
-  if (manualDisconnectRef.current) {
-    return
-  }
-
-  if (connectedRef.current || connectingRef.current) {
-    return
-  }
-
-  if (reconnectTimerRef.current) {
-    return
-  }
-
-  const attempt = reconnectAttemptRef.current + 1
-  reconnectAttemptRef.current = attempt
-
-  // 2 ثوانٍ في البداية، ثم تصل تدريجيًا إلى 5 ثوانٍ كحد أقصى
-  const delay = Math.min(2000 + (attempt - 1) * 1000, 5000)
-
-  console.log("USB AUTO RECONNECT SCHEDULED:", {
-    attempt,
-    delay,
-  })
-
-  setUsbStatus("offline")
-  setUsbError("في انتظار تشغيل Avocato Desktop...")
-
-  reconnectTimerRef.current = setTimeout(async () => {
-    reconnectTimerRef.current = null
-
-    if (!mountedRef.current) {
-      return
-    }
-
     if (manualDisconnectRef.current) {
       return
     }
@@ -3369,86 +3328,110 @@ export default function UsbSyncScreen() {
       return
     }
 
-    console.log("USB AUTO RECONNECT TRY:", attempt)
+    if (reconnectTimerRef.current) {
+      return
+    }
 
-    try {
-      await connectUsb()
+    const attempt = reconnectAttemptRef.current + 1
+    reconnectAttemptRef.current = attempt
 
-      // connectUsb قد لا يرمي exception لأن الاتصال يتم native async
-      // لذلك إذا لم يحدث connected event سنعيد المحاولة من هنا.
-      setTimeout(() => {
-        if (
-          mountedRef.current &&
-          !manualDisconnectRef.current &&
-          !connectedRef.current &&
-          !connectingRef.current
-        ) {
+    // 2 ثوانٍ في البداية، ثم تصل تدريجيًا إلى 5 ثوانٍ كحد أقصى
+    const delay = Math.min(2000 + (attempt - 1) * 1000, 5000)
+
+    console.log("USB AUTO RECONNECT SCHEDULED:", {
+      attempt,
+      delay,
+    })
+
+    setUsbStatus("offline")
+    setUsbError("في انتظار تشغيل Avocato Desktop...")
+
+    reconnectTimerRef.current = setTimeout(async () => {
+      reconnectTimerRef.current = null
+
+      if (!mountedRef.current) {
+        return
+      }
+
+      if (manualDisconnectRef.current) {
+        return
+      }
+
+      if (connectedRef.current || connectingRef.current) {
+        return
+      }
+
+      console.log("USB AUTO RECONNECT TRY:", attempt)
+
+      try {
+        await connectUsb()
+
+        // connectUsb قد لا يرمي exception لأن الاتصال يتم native async
+        // لذلك إذا لم يحدث connected event سنعيد المحاولة من هنا.
+        setTimeout(() => {
+          if (
+            mountedRef.current &&
+            !manualDisconnectRef.current &&
+            !connectedRef.current &&
+            !connectingRef.current
+          ) {
+            scheduleUsbReconnect()
+          }
+        }, 1500)
+      } catch (error) {
+        console.warn("USB AUTO RECONNECT ERROR:", error?.message || error)
+
+        if (mountedRef.current && !manualDisconnectRef.current) {
           scheduleUsbReconnect()
         }
-      }, 1500)
-    } catch (error) {
-      console.warn(
-        "USB AUTO RECONNECT ERROR:",
-        error?.message || error
-      )
-
-      if (
-        mountedRef.current &&
-        !manualDisconnectRef.current
-      ) {
-        scheduleUsbReconnect()
       }
-    }
-  }, delay)
-}, [connectUsb])
+    }, delay)
+  }, [connectUsb])
   // ==========================================================
   // DISCONNECT
   // ==========================================================
 
   const disconnectUsb = useCallback(() => {
-  manualDisconnectRef.current = true
+    manualDisconnectRef.current = true
 
-  connectionOfflineRef.current = false
-  reconnectAttemptRef.current = 0
+    connectionOfflineRef.current = false
+    reconnectAttemptRef.current = 0
 
-  if (reconnectTimerRef.current) {
-    clearTimeout(reconnectTimerRef.current)
-    reconnectTimerRef.current = null
-  }
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
 
-  for (const [requestId, waiter] of autoSyncWaitersRef.current) {
+    for (const [requestId, waiter] of autoSyncWaitersRef.current) {
+      try {
+        waiter.reject(new Error("CONNECTION_CLOSED"))
+      } catch (_) {}
+    }
+
+    autoSyncWaitersRef.current.clear()
+
+    autoSyncStartedRef.current = false
+    autoSyncCurrentRef.current = null
+
+    setFileSyncing(false)
+
     try {
-      waiter.reject(new Error("CONNECTION_CLOSED"))
-    } catch (_) {}
-  }
+      AvocatoFlow.disconnect()
+    } catch (error) {
+      console.warn("USB DISCONNECT ERROR:", error)
+    }
 
-  autoSyncWaitersRef.current.clear()
+    connectedRef.current = false
+    connectingRef.current = false
 
-  autoSyncStartedRef.current = false
-  autoSyncCurrentRef.current = null
+    databaseSyncRunningRef.current = false
+    databaseSyncRequestRef.current = null
 
-  setFileSyncing(false)
-
-  try {
-    AvocatoFlow.disconnect()
-  } catch (error) {
-    console.warn(
-      "USB DISCONNECT ERROR:",
-      error
-    )
-  }
-
-  connectedRef.current = false
-  connectingRef.current = false
-
-  databaseSyncRunningRef.current = false
-  databaseSyncRequestRef.current = null
-
-  setUsbConnected(false)
-  setUsbStatus("disconnected")
-  setDatabaseSyncing(false)
-  setUsbError("")
-}, [])
+    setUsbConnected(false)
+    setUsbStatus("disconnected")
+    setDatabaseSyncing(false)
+    setUsbError("")
+  }, [])
 
   // ==========================================================
   // UNPAIR
@@ -3649,7 +3632,7 @@ export default function UsbSyncScreen() {
           "onFileCompleted",
           event => {
             verifyIncomingFile(event).catch(error => {
-              console.error("USB NATIVE FILE COMPLETED HANDLER ERROR:", error)
+              console.log("USB NATIVE FILE COMPLETED HANDLER ERROR:", error)
             })
           },
         )
@@ -3664,10 +3647,7 @@ export default function UsbSyncScreen() {
               (transferId ? findRequestIdByTransferId(transferId) : null)
 
             if (!requestId) {
-              console.error(
-                "USB NATIVE FILE ERROR REQUEST ID NOT FOUND:",
-                event,
-              )
+              console.log("USB NATIVE FILE ERROR REQUEST ID NOT FOUND:", event)
 
               return
             }
@@ -3679,7 +3659,7 @@ export default function UsbSyncScreen() {
 
               error: event?.error || "فشل نقل الملف.",
             }).catch(error => {
-              console.error("USB NATIVE FILE ERROR HANDLER ERROR:", error)
+              console.log("USB NATIVE FILE ERROR HANDLER ERROR:", error)
             })
           },
         )
@@ -3696,7 +3676,7 @@ export default function UsbSyncScreen() {
           }
         }, 300)
       } catch (error) {
-        console.error("USB SCREEN INITIALIZE ERROR:", error)
+        console.log("USB SCREEN INITIALIZE ERROR:", error)
 
         setUsbStatus("error")
 
@@ -3869,472 +3849,398 @@ export default function UsbSyncScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* ================================================== */}
-      {/* HEADER */}
-      {/* ================================================== */}
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: "#0f172a" }}
+      behavior={Platform.OS === "ios" ? "padding" : "height"}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 5}
+    >
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+      >
+        {/* ================================================== */}
+        {/* HEADER */}
+        {/* ================================================== */}
 
-      <View style={styles.header}>
-        <View style={styles.headerIcon}>
-          <MaterialIcons name="usb" size={32} color="#2563eb" />
-        </View>
-
-        <View style={styles.headerText}>
-          <Text style={styles.title}>مزامنة USB</Text>
-
-          <Text style={styles.subtitle}>
-            مزامنة بيانات الأفوكاتو مباشرة عبر USB
-          </Text>
-        </View>
-      </View>
-
-      {/* ================================================== */}
-      {/* CONNECTION */}
-      {/* ================================================== */}
-
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>حالة الاتصال</Text>
-
-          <View
-            style={[
-              styles.statusBadge,
-              {
-                backgroundColor: usbConnected ? "#dcfce7" : "#f1f5f9",
-              },
-            ]}
-          >
-            <View
-              style={[
-                styles.statusDot,
-                {
-                  backgroundColor: statusColor,
-                },
-              ]}
-            />
-
-            <Text style={styles.statusText}>{statusText}</Text>
+        <View style={styles.header}>
+          <View style={styles.headerIcon}>
+            <MaterialIcons name="usb" size={32} color="#818cf8" />
           </View>
-        </View>
 
-        {pcDevice ? (
-          <View style={styles.connectedBox}>
-            <View style={styles.deviceIcon}>
-              <MaterialIcons name="computer" size={32} color="#2563eb" />
-            </View>
+          <View style={styles.headerText}>
+            <Text style={styles.title}>مزامنة USB</Text>
 
-            <View style={styles.deviceInfo}>
-              <Text style={styles.deviceName}>{pcDevice.name}</Text>
-
-              <Text style={styles.deviceIp}>USB / ADB Reverse</Text>
-
-              <Text style={styles.deviceIp}>
-                WS: {USB_WS_PORT}
-                {"  "}
-                HTTP: {USB_HTTP_PORT}
-              </Text>
-
-              <Text style={styles.trustedText}>
-                {trusted ? "✓ جهاز موثوق" : "⚠ يحتاج إلى اقتران"}
-              </Text>
-            </View>
-          </View>
-        ) : (
-          <View style={styles.notConnected}>
-            <MaterialIcons name="usb" size={42} color="#94a3b8" />
-
-            <Text style={styles.notConnectedText}>
-              {usbStatus === "connecting"
-                ? "جاري الاتصال عبر USB..."
-                : "لم يتم الاتصال بالكمبيوتر"}
+            <Text style={styles.subtitle}>
+              مزامنة بيانات الأفوكاتو مباشرة عبر USB
             </Text>
           </View>
-        )}
-
-        {usbError ? (
-          <View style={styles.errorBox}>
-            <MaterialIcons name="error-outline" size={22} color="#dc2626" />
-
-            <Text style={styles.errorText}>{usbError}</Text>
-          </View>
-        ) : null}
-
-        {!usbConnected ? (
-          <Pressable
-            style={styles.primaryButton}
-            onPress={connectUsb}
-            disabled={usbStatus === "connecting"}
-          >
-            {usbStatus === "connecting" ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <MaterialIcons name="usb" size={22} color="#fff" />
-            )}
-
-            <Text style={styles.primaryButtonText}>
-              {usbStatus === "connecting"
-                ? "جاري الاتصال..."
-                : "الاتصال عبر USB"}
-            </Text>
-          </Pressable>
-        ) : (
-          <View>
-            <Pressable style={styles.disconnectButton} onPress={disconnectUsb}>
-              <MaterialIcons name="link-off" size={21} color="#fff" />
-
-              <Text style={styles.forgetButtonText}>قطع الاتصال</Text>
-            </Pressable>
-            {trusted ? (
-              <Pressable
-                style={styles.unpairButton}
-                onPress={unpair}
-                className="mt-3"
-              >
-                <MaterialIcons
-                  name="delete-outline"
-                  size={22}
-                  color="#dc2626"
-                />
-
-                <Text style={styles.unpairText}>إلغاء الاقتران</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        )}
-      </View>
-
-      {/* ================================================== */}
-      {/* PAIRING */}
-      {/* ================================================== */}
-
-      {usbConnected && !trusted ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>الاقتران</Text>
-
-          <Text style={styles.description}>
-            يجب إقران الهاتف بالكمبيوتر قبل بدء المزامنة.
-          </Text>
-
-          {pairingState === "code_received" ? (
-            <View>
-              <Text style={styles.label}>كود الاقتران</Text>
-
-              <TextInput
-                value={pairingCode}
-
-                onChangeText={text => {
-                  setPairingCode(text.replace(/[^0-9]/g, "").slice(0, 6))
-                }}
-
-                keyboardType="number-pad"
-
-                maxLength={6}
-
-                placeholder="000000"
-
-                placeholderTextColor="#94a3b8"
-
-                textAlign="center"
-
-                style={styles.codeInput}
-              />
-
-              <Text style={styles.hint}>أدخل الكود الظاهر على الكمبيوتر.</Text>
-
-              <Pressable style={styles.successButton} onPress={confirmPairing}>
-                <MaterialIcons name="check-circle" size={22} color="#fff" />
-
-                <Text style={styles.primaryButtonText}>تأكيد الاقتران</Text>
-              </Pressable>
-            </View>
-          ) : (
-            <Pressable style={styles.primaryButton} onPress={sendPairRequest}>
-              <MaterialIcons name="link" size={22} color="#fff" />
-
-              <Text style={styles.primaryButtonText}>طلب الاقتران</Text>
-            </Pressable>
-          )}
         </View>
-      ) : null}
 
-      {/* ================================================== */}
-      {/* DATABASE SUCCESS */}
-      {/* ================================================== */}
+        {/* ================================================== */}
+        {/* CONNECTION */}
+        {/* ================================================== */}
 
-      {databaseSyncSuccess ? (
-        <View style={styles.successBox}>
-          <MaterialIcons name="check-circle" size={24} color="#16a34a" />
-
-          <Text style={styles.successText}>
-            تمت مزامنة قاعدة البيانات بنجاح
-          </Text>
-        </View>
-      ) : null}
-
-      {/* ================================================== */}
-      {/* DATABASE STATUS */}
-      {/* ================================================== */}
-
-      {/* {usbConnected && trusted ? (
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>قاعدة البيانات</Text>
+            <Text style={styles.cardTitle}>حالة الاتصال</Text>
 
-            <MaterialIcons
-              name="storage"
-              size={23}
-              color={databaseSyncing ? "#2563eb" : "#16a34a"}
-            />
-          </View>
-
-          <View style={styles.databaseStatusRow}>
             <View
               style={[
-                styles.statusDot,
+                styles.statusBadge,
                 {
-                  backgroundColor: databaseSyncing ? "#2563eb" : "#16a34a",
+                  backgroundColor: usbConnected ? "#064e3b" : "#334155",
                 },
               ]}
-            />
-
-            <Text style={styles.databaseStatusText}>
-              {databaseSyncing
-                ? `جاري المزامنة ${databaseProgress}%`
-                : "قاعدة البيانات جاهزة"}
-            </Text>
-          </View>
-
-          {databaseSyncing ? (
-            <View style={styles.progressBackground}>
+            >
               <View
                 style={[
-                  styles.progressBar,
+                  styles.statusDot,
                   {
-                    width: `${databaseProgress}%`,
+                    backgroundColor: statusColor,
                   },
                 ]}
               />
+
+              <Text style={styles.statusText}>{statusText}</Text>
+            </View>
+          </View>
+
+          {pcDevice ? (
+            <View style={styles.connectedBox}>
+              <View style={styles.deviceIcon}>
+                <MaterialIcons name="computer" size={32} color="#818cf8" />
+              </View>
+
+              <View style={styles.deviceInfo}>
+                <Text style={styles.deviceName}>{pcDevice.name}</Text>
+
+                <Text style={styles.deviceIp}>USB / ADB Reverse</Text>
+
+                <Text style={styles.deviceIp}>
+                  WS: {USB_WS_PORT}
+                  {"  "}
+                  HTTP: {USB_HTTP_PORT}
+                </Text>
+
+                <Text style={styles.trustedText}>
+                  {trusted ? "✓ جهاز موثوق" : "⚠ يحتاج إلى اقتران"}
+                </Text>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.notConnected}>
+              <MaterialIcons name="usb" size={42} color="#64748b" />
+
+              <Text style={styles.notConnectedText}>
+                {usbStatus === "connecting"
+                  ? "جاري الاتصال عبر USB..."
+                  : "لم يتم الاتصال بالكمبيوتر"}
+              </Text>
+            </View>
+          )}
+
+          {usbError ? (
+            <View style={styles.errorBox}>
+              <MaterialIcons name="error-outline" size={22} color="#f87171" />
+
+              <Text style={styles.errorText}>{usbError}</Text>
             </View>
           ) : null}
-        </View>
-      ) : null} */}
 
-      {/* ================================================== */}
-      {/* FILES */}
-      {/* ================================================== */}
+          {!usbConnected ? (
+            <Pressable
+              style={styles.primaryButton}
+              onPress={connectUsb}
+              disabled={usbStatus === "connecting"}
+            >
+              {usbStatus === "connecting" ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <MaterialIcons name="usb" size={22} color="#fff" />
+              )}
 
-      {usbConnected && trusted ? (
-        transfers.length > 0 ? (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>نقل الملفات</Text>
+              <Text style={styles.primaryButtonText}>
+                {usbStatus === "connecting"
+                  ? "جاري الاتصال..."
+                  : "الاتصال عبر USB"}
+              </Text>
+            </Pressable>
+          ) : (
+            <View>
+              <Pressable
+                style={styles.disconnectButton}
+                onPress={disconnectUsb}
+              >
+                <MaterialIcons name="link-off" size={21} color="#fff" />
 
-              <MaterialIcons name="folder" size={23} color="#2563eb" />
+                <Text style={styles.forgetButtonText}>قطع الاتصال</Text>
+              </Pressable>
+              {trusted ? (
+                <Pressable
+                  style={styles.unpairButton}
+                  onPress={unpair}
+                  className="mt-3"
+                >
+                  <MaterialIcons
+                    name="delete-outline"
+                    size={22}
+                    color="#f87171"
+                  />
+
+                  <Text style={styles.unpairText}>إلغاء الاقتران</Text>
+                </Pressable>
+              ) : null}
             </View>
+          )}
+        </View>
+
+        {/* ================================================== */}
+        {/* PAIRING */}
+        {/* ================================================== */}
+
+        {usbConnected && !trusted ? (
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>الاقتران</Text>
 
             <Text style={styles.description}>
-              {fileSyncing
-                ? "جاري مزامنة الملفات الموجودة في sync_files..."
-                : "يتم مزامنة الملفات المعلقة تلقائيًا عبر USB."}
+              يجب إقران الهاتف بالكمبيوتر قبل بدء المزامنة.
             </Text>
 
-            <View style={styles.transferList}>
-              {transfers
-                .slice()
-                .reverse()
-                .map(transfer => {
-                  const progress = getProgress(transfer)
+            {pairingState === "code_received" ? (
+              <View>
+                <Text style={styles.label}>كود الاقتران</Text>
 
-                  const isIncoming = transfer.direction === "PC_TO_ANDROID"
+                <TextInput
+                  value={pairingCode}
+                  onChangeText={text => {
+                    setPairingCode(text.replace(/[^0-9]/g, "").slice(0, 6))
+                  }}
+                  keyboardType="number-pad"
+                  maxLength={6}
+                  placeholder="000000"
+                  placeholderTextColor="#64748b"
+                  textAlign="center"
+                  style={styles.codeInput}
+                />
 
-                  return (
-                    <View key={transfer.requestId} style={styles.transferItem}>
-                      <View style={styles.transferTop}>
-                        <MaterialIcons
-                          name={
-                            transfer.status === "completed"
-                              ? "check-circle"
-                              : transfer.status === "error"
-                                ? "error"
-                                : isIncoming
-                                  ? "download"
-                                  : "insert-drive-file"
-                          }
-                          size={23}
-                          color={
-                            transfer.status === "completed"
-                              ? "#16a34a"
-                              : transfer.status === "error"
-                                ? "#dc2626"
-                                : "#2563eb"
-                          }
-                        />
+                <Text style={styles.hint}>
+                  أدخل الكود الظاهر على الكمبيوتر.
+                </Text>
 
-                        <View style={styles.transferInfo}>
-                          <Text numberOfLines={1} style={styles.transferName}>
-                            {transfer.fileName}
-                          </Text>
+                <Pressable
+                  style={styles.successButton}
+                  onPress={confirmPairing}
+                >
+                  <MaterialIcons name="check-circle" size={22} color="#fff" />
 
-                          <Text style={styles.transferSize}>
-                            {formatBytes(transfer.transferred)}
-                            {" / "}
-                            {formatBytes(transfer.total)}
-                          </Text>
+                  <Text style={styles.primaryButtonText}>تأكيد الاقتران</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <Pressable style={styles.primaryButton} onPress={sendPairRequest}>
+                <MaterialIcons name="link" size={22} color="#fff" />
+
+                <Text style={styles.primaryButtonText}>طلب الاقتران</Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null}
+
+        {/* ================================================== */}
+        {/* DATABASE SUCCESS */}
+        {/* ================================================== */}
+
+        {databaseSyncSuccess ? (
+          <View style={styles.successBox}>
+            <MaterialIcons name="check-circle" size={24} color="#34d399" />
+
+            <Text style={styles.successText}>
+              تمت مزامنة قاعدة البيانات بنجاح
+            </Text>
+          </View>
+        ) : null}
+
+        {/* ================================================== */}
+        {/* FILES */}
+        {/* ================================================== */}
+
+        {usbConnected && trusted ? (
+          transfers.length > 0 ? (
+            <View style={styles.card}>
+              <View style={styles.cardHeader}>
+                <Text style={styles.cardTitle}>نقل الملفات</Text>
+
+                <MaterialIcons name="folder" size={23} color="#818cf8" />
+              </View>
+
+              <Text style={styles.description}>
+                {fileSyncing
+                  ? "جاري مزامنة الملفات الموجودة في sync_files..."
+                  : "يتم مزامنة الملفات المعلقة تلقائيًا عبر USB."}
+              </Text>
+
+              <View style={styles.transferList}>
+                {transfers
+                  .slice()
+                  .reverse()
+                  .map(transfer => {
+                    const progress = getProgress(transfer)
+
+                    const isIncoming = transfer.direction === "PC_TO_ANDROID"
+
+                    return (
+                      <View
+                        key={transfer.requestId}
+                        style={styles.transferItem}
+                      >
+                        <View style={styles.transferTop}>
+                          <MaterialIcons
+                            name={
+                              transfer.status === "completed"
+                                ? "check-circle"
+                                : transfer.status === "error"
+                                  ? "error"
+                                  : isIncoming
+                                    ? "download"
+                                    : "insert-drive-file"
+                            }
+                            size={23}
+                            color={
+                              transfer.status === "completed"
+                                ? "#34d399"
+                                : transfer.status === "error"
+                                  ? "#f87171"
+                                  : "#818cf8"
+                            }
+                          />
+
+                          <View style={styles.transferInfo}>
+                            <Text numberOfLines={1} style={styles.transferName}>
+                              {transfer.fileName}
+                            </Text>
+
+                            <Text style={styles.transferSize}>
+                              {formatBytes(transfer.transferred)}
+                              {" / "}
+                              {formatBytes(transfer.total)}
+                            </Text>
+                          </View>
+
+                          <Text style={styles.progressText}>{progress}%</Text>
                         </View>
 
-                        <Text style={styles.progressText}>{progress}%</Text>
-                      </View>
+                        <View style={styles.progressBackground}>
+                          <View
+                            style={[
+                              styles.progressBar,
+                              {
+                                width: `${progress}%`,
+                              },
+                            ]}
+                          />
+                        </View>
 
-                      <View style={styles.progressBackground}>
-                        <View
-                          style={[
-                            styles.progressBar,
-                            {
-                              width: `${progress}%`,
-                            },
-                          ]}
-                        />
-                      </View>
-
-                      <Text style={styles.transferStatus}>
-                        {transfer.status === "waiting"
-                          ? "في انتظار البدء..."
-                          : transfer.status === "transferring"
-                            ? "جاري النقل..."
-                            : transfer.status === "completed"
-                              ? isIncoming
-                                ? "تم تنزيل الملف إلى الهاتف بنجاح"
-                                : "تم النقل بنجاح وحذف مهمة المزامنة"
-                              : "فشل النقل"}
-                      </Text>
-
-                      {transfer.syncFileId ? (
-                        <Text style={styles.syncFileIdText}>
-                          syncFileId: {transfer.syncFileId}
+                        <Text style={styles.transferStatus}>
+                          {transfer.status === "waiting"
+                            ? "في انتظار البدء..."
+                            : transfer.status === "transferring"
+                              ? "جاري النقل..."
+                              : transfer.status === "completed"
+                                ? isIncoming
+                                  ? "تم تنزيل الملف إلى الهاتف بنجاح"
+                                  : "تم النقل بنجاح وحذف مهمة المزامنة"
+                                : "فشل النقل"}
                         </Text>
-                      ) : null}
-                    </View>
-                  )
-                })}
+
+                        {transfer.syncFileId ? (
+                          <Text style={styles.syncFileIdText}>
+                            syncFileId: {transfer.syncFileId}
+                          </Text>
+                        ) : null}
+                      </View>
+                    )
+                  })}
+              </View>
+            </View>
+          ) : null
+        ) : null}
+
+        {/* ================================================== */}
+        {/* HOW IT WORKS */}
+        {/* ================================================== */}
+        {!usbConnected && (
+          <View className="mt-5 rounded-3xl bg-slate-800 border border-slate-700 p-5 shadow-sm">
+            <Text className="text-lg font-black text-slate-100">
+              طريقة الاستخدام
+            </Text>
+
+            <View className="mt-5">
+              <Step
+                number="1"
+                icon="cable"
+                title="وصل كابل USB"
+                description="قم بتوصيل الهاتف بالكمبيوتر."
+              />
+
+              <Step
+                number="2"
+                icon="usb"
+                title="تشغيل Avocato Desktop"
+                description="يقوم Avocato Desktop بتشغيل ADB المدمج وإنشاء قناة USB."
+              />
+
+              <Step
+                number="3"
+                icon="login"
+                title="طلب الاقتران"
+                description="بعد الاتصال يرسل الهاتف طلب الاقتران إلى الكمبيوتر."
+              />
+
+              <Step
+                number="4"
+                icon="computer"
+                title="عرض الكود على الكمبيوتر"
+                description="يظهر كود الاقتران المكون من 6 أرقام على شاشة Sync في الكمبيوتر."
+              />
+
+              <Step
+                number="5"
+                icon="vpn-key"
+                title="إدخال الكود على الهاتف"
+                description="اكتب الكود الظاهر على الكمبيوتر في الحقل الموجود على الهاتف."
+              />
+
+              <Step
+                number="6"
+                icon="check-circle"
+                title="تأكيد الاقتران"
+                description="اضغط تأكيد الاقتران، وبعد التحقق يصبح الكمبيوتر موثوقًا."
+              />
+
+              <Step
+                number="7"
+                icon="sync"
+                title="المزامنة"
+                description="بعد نجاح الاقتران يمكن تشغيل مزامنة قاعدة البيانات ونقل الملفات."
+              />
             </View>
           </View>
-        ) : null
-      ) : null}
-      {/* ) : null} */}
+        )}
 
-      {/* ================================================== */}
-      {/* UNPAIR */}
-      {/* ================================================== */}
+        {/* ================================================== */}
+        {/* INFO */}
+        {/* ================================================== */}
 
-      {/* ================================================== */}
-      {/* TEST */}
-      {/* ================================================== */}
+        <View style={styles.infoBox} className="mt-4">
+          <MaterialIcons name="info-outline" size={22} color="#818cf8" />
 
-      {/* {usbConnected && trusted ? (
-        <Pressable style={styles.testButton} onPress={sendTestMessage}>
-          <MaterialIcons name="send" size={21} color="#2563eb" />
-
-          <Text style={styles.testText}>اختبار اتصال USB</Text>
-        </Pressable>
-      ) : null} */}
-
-      {/* ================================================== */}
-      {/* DEBUG MESSAGE */}
-      {/* ================================================== */}
-
-      {/* ================================================== */}
-      {/* HOW IT WORKS */}
-      {/* ================================================== */}
-      {!usbConnected && (
-        <View className="mt-5 rounded-3xl bg-white p-5 shadow-sm">
-          <Text className="text-lg font-black text-gray-900">
-            طريقة الاستخدام
+          <Text style={styles.infoText}>
+            اتصال USB يستخدم ADB Reverse - تأكد من أن كابل الـ USB يدعم نقل
+            البيانات .
           </Text>
-
-          <View className="mt-5">
-            <Step
-              number="1"
-              icon="cable"
-              title="وصل كابل USB"
-              description="قم بتوصيل الهاتف بالكمبيوتر."
-            />
-
-            <Step
-              number="2"
-              icon="usb"
-              title="تشغيل Avocato Desktop"
-              description="يقوم Avocato Desktop بتشغيل ADB المدمج وإنشاء قناة USB."
-            />
-
-            <Step
-              number="3"
-              icon="login"
-              title="طلب الاقتران"
-              description="بعد الاتصال يرسل الهاتف طلب الاقتران إلى الكمبيوتر."
-            />
-
-            <Step
-              number="4"
-              icon="computer"
-              title="عرض الكود على الكمبيوتر"
-              description="يظهر كود الاقتران المكون من 6 أرقام على شاشة Sync في الكمبيوتر."
-            />
-
-            <Step
-              number="5"
-              icon="vpn-key"
-              title="إدخال الكود على الهاتف"
-              description="اكتب الكود الظاهر على الكمبيوتر في الحقل الموجود على الهاتف."
-            />
-
-            <Step
-              number="6"
-              icon="check-circle"
-              title="تأكيد الاقتران"
-              description="اضغط تأكيد الاقتران، وبعد التحقق يصبح الكمبيوتر موثوقًا."
-            />
-
-            <Step
-              number="7"
-              icon="sync"
-              title="المزامنة"
-              description="بعد نجاح الاقتران يمكن تشغيل مزامنة قاعدة البيانات ونقل الملفات."
-            />
-          </View>
         </View>
-      )}
-
-      {/* ================================================== */}
-      {/* INFO */}
-      {/* ================================================== */}
-
-      <View style={styles.infoBox} className="mt-4">
-        <MaterialIcons name="info-outline" size={22} color="#2563eb" />
-
-        <Text style={styles.infoText}>
-          اتصال USB يستخدم ADB Reverse - تأكد من أن كابل الـ USB يدعم نقل
-          البيانات .
-        </Text>
-      </View>
-
-      {/* ================================================== */}
-      {/* TECHNICAL INFO */}
-      {/* ================================================== */}
-
-      {/* <View style={styles.techBox}>
-        <Text style={styles.techTitle}>معلومات الاتصال</Text>
-
-        <Text style={styles.techText}>WebSocket: 127.0.0.1:{USB_WS_PORT}</Text>
-
-        <Text style={styles.techText}>HTTP: 127.0.0.1:{USB_HTTP_PORT}</Text>
-
-        <Text style={styles.techText}>Transport: USB / ADB Reverse</Text>
-
-        <Text style={styles.techText}>
-          Device ID: {deviceId || "غير متوفر"}
-        </Text>
-      </View> */}
-    </ScrollView>
+      </ScrollView>
+    </KeyboardAvoidingView>
   )
 }
 
@@ -4342,21 +4248,21 @@ function Step({ number, icon, title, description }) {
   return (
     <View className="mb-5 flex-row">
       <View className="items-center">
-        <View className="h-10 w-10 items-center justify-center rounded-full bg-blue-600">
+        <View className="h-10 w-10 items-center justify-center rounded-full bg-indigo-600">
           <Text className="text-sm font-black text-white">{number}</Text>
         </View>
       </View>
 
       <View className="ml-3 flex-1">
         <View className="flex-row items-center">
-          <MaterialIcons name={icon} size={20} color="#2563eb" />
+          <MaterialIcons name={icon} size={20} color="#818cf8" />
 
-          <Text className="ml-2 text-base font-bold text-gray-900">
+          <Text className="ml-2 text-base font-bold text-slate-100">
             {title}
           </Text>
         </View>
 
-        <Text className="mt-1 text-sm leading-6 text-gray-500">
+        <Text className="mt-1 text-sm leading-6 text-slate-400">
           {description}
         </Text>
       </View>
@@ -4365,43 +4271,33 @@ function Step({ number, icon, title, description }) {
 }
 
 // ============================================================
-// STYLES
+// STYLES (Dark Mode)
 // ============================================================
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-
-    backgroundColor: "#f8fafc",
+    backgroundColor: "#0f172a",
   },
 
   content: {
     padding: 16,
-
     paddingBottom: 40,
   },
 
   header: {
     flexDirection: "row",
-
     alignItems: "center",
-
     marginBottom: 18,
   },
 
   headerIcon: {
     width: 56,
-
     height: 56,
-
     borderRadius: 16,
-
-    backgroundColor: "#eff6ff",
-
+    backgroundColor: "#312e81",
     alignItems: "center",
-
     justifyContent: "center",
-
     marginRight: 12,
   },
 
@@ -4411,123 +4307,85 @@ const styles = StyleSheet.create({
 
   title: {
     fontSize: 25,
-
     fontWeight: "800",
-
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   subtitle: {
     marginTop: 3,
-
     fontSize: 14,
-
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   card: {
-    backgroundColor: "#ffffff",
-
+    backgroundColor: "#1e293b",
     borderRadius: 18,
-
     padding: 16,
-
     marginBottom: 14,
-
     borderWidth: 1,
-
-    borderColor: "#e2e8f0",
-
+    borderColor: "#334155",
     shadowColor: "#000",
-
     shadowOffset: {
       width: 0,
-
       height: 2,
     },
-
-    shadowOpacity: 0.04,
-
+    shadowOpacity: 0.2,
     shadowRadius: 5,
-
     elevation: 2,
   },
 
   cardHeader: {
     flexDirection: "row",
-
     alignItems: "center",
-
     justifyContent: "space-between",
-
     marginBottom: 14,
   },
 
   cardTitle: {
     fontSize: 18,
-
     fontWeight: "800",
-
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   statusBadge: {
     flexDirection: "row",
-
     alignItems: "center",
-
     paddingHorizontal: 5,
-
     paddingVertical: 6,
-
     borderRadius: 20,
   },
 
   statusDot: {
     width: 8,
-
     height: 8,
-
     borderRadius: 4,
-
     marginRight: 6,
   },
 
   statusText: {
     fontSize: 10,
-
     fontWeight: "700",
-
-    color: "#334155",
+    color: "#cbd5e1",
   },
 
   connectedBox: {
     flexDirection: "row",
-
     alignItems: "center",
-
-    backgroundColor: "#f8fafc",
-
+    backgroundColor: "#0f172a",
     borderRadius: 14,
-
     padding: 14,
-
     marginBottom: 14,
+    borderWidth: 1,
+    borderColor: "#334155",
   },
 
   deviceIcon: {
     width: 56,
-
     height: 56,
-
     borderRadius: 14,
-
-    backgroundColor: "#eff6ff",
-
+    backgroundColor: "#312e81",
     alignItems: "center",
-
     justifyContent: "center",
-
     marginRight: 12,
   },
 
@@ -4537,288 +4395,175 @@ const styles = StyleSheet.create({
 
   deviceName: {
     fontSize: 17,
-
     fontWeight: "800",
-
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   deviceIp: {
     marginTop: 3,
-
     fontSize: 12,
-
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   trustedText: {
     marginTop: 5,
-
     fontSize: 13,
-
-    color: "#16a34a",
-
+    color: "#34d399",
     fontWeight: "700",
   },
 
   notConnected: {
     alignItems: "center",
-
     justifyContent: "center",
-
     paddingVertical: 24,
   },
 
   notConnectedText: {
     marginTop: 10,
-
     fontSize: 14,
-
-    color: "#64748b",
-
+    color: "#94a3b8",
     textAlign: "center",
   },
 
   description: {
     marginTop: 5,
-
     marginBottom: 15,
-
     fontSize: 13,
-
     lineHeight: 21,
-
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   label: {
     marginBottom: 8,
-
     fontSize: 13,
-
     fontWeight: "700",
-
-    color: "#475569",
+    color: "#cbd5e1",
   },
 
   codeInput: {
     height: 58,
-
     borderWidth: 2,
-
-    borderColor: "#bfdbfe",
-
+    borderColor: "#4338ca",
     borderRadius: 14,
-
-    backgroundColor: "#ffffff",
-
+    backgroundColor: "#0f172a",
     fontSize: 20,
-
     fontWeight: "800",
-
     letterSpacing: 6,
-
-    color: "#0f172a",
-
+    color: "#f1f5f9",
     marginBottom: 8,
   },
 
   hint: {
     fontSize: 12,
-
-    color: "#64748b",
-
+    color: "#94a3b8",
     textAlign: "center",
-
     marginBottom: 14,
   },
 
   errorBox: {
     flexDirection: "row",
-
     alignItems: "center",
-
-    backgroundColor: "#fef2f2",
-
+    backgroundColor: "#451a03",
     borderWidth: 1,
-
-    borderColor: "#fecaca",
-
+    borderColor: "#78350f",
     borderRadius: 12,
-
     padding: 12,
-
     marginBottom: 12,
   },
 
   errorText: {
     flex: 1,
-
     marginLeft: 8,
-
-    color: "#b91c1c",
-
+    color: "#fca5a5",
     fontSize: 13,
-
     lineHeight: 20,
   },
 
   successBox: {
     flexDirection: "row",
-
     alignItems: "center",
-
-    backgroundColor: "#dcfce7",
-
+    backgroundColor: "#064e3b",
     borderWidth: 1,
-
-    borderColor: "#86efac",
-
+    borderColor: "#047857",
     borderRadius: 13,
-
     padding: 13,
-
     marginBottom: 12,
   },
 
   successText: {
     flex: 1,
-
     marginLeft: 8,
-
     fontSize: 13,
-
     fontWeight: "700",
-
-    color: "#166534",
+    color: "#d1fae5",
   },
 
   databaseStatusRow: {
     flexDirection: "row",
-
     alignItems: "center",
   },
 
   databaseStatusText: {
     fontSize: 13,
-
-    color: "#475569",
-
+    color: "#94a3b8",
     fontWeight: "600",
   },
 
   primaryButton: {
     minHeight: 48,
-
     borderRadius: 12,
-
-    backgroundColor: "#2563eb",
-
+    backgroundColor: "#4f46e5",
     flexDirection: "row",
-
     alignItems: "center",
-
     justifyContent: "center",
-
     paddingHorizontal: 16,
-
     gap: 8,
   },
 
   primaryButtonText: {
     color: "#ffffff",
-
     fontSize: 15,
-
     fontWeight: "800",
   },
 
   successButton: {
     minHeight: 48,
-
     borderRadius: 12,
-
     backgroundColor: "#16a34a",
-
     flexDirection: "row",
-
     alignItems: "center",
-
     justifyContent: "center",
-
     gap: 8,
   },
 
   disconnectButton: {
     minHeight: 48,
-
     borderRadius: 12,
-
-    backgroundColor: "#c0392b",
-
+    backgroundColor: "#991b1b",
     flexDirection: "row",
-
     alignItems: "center",
-
     justifyContent: "center",
-
     gap: 8,
   },
 
   forgetButtonText: {
     color: "#ffffff",
-
     fontSize: 14,
-
     fontWeight: "700",
   },
 
   progressBackground: {
     height: 8,
-
-    backgroundColor: "#e2e8f0",
-
+    backgroundColor: "#334155",
     borderRadius: 10,
-
     overflow: "hidden",
-
     marginTop: 10,
   },
 
   progressBar: {
     height: "100%",
-
-    backgroundColor: "#2563eb",
-
+    backgroundColor: "#4f46e5",
     borderRadius: 10,
-  },
-
-  fileButton: {
-    minHeight: 54,
-
-    borderRadius: 13,
-
-    backgroundColor: "#eff6ff",
-
-    borderWidth: 1,
-
-    borderColor: "#bfdbfe",
-
-    flexDirection: "row",
-
-    alignItems: "center",
-
-    justifyContent: "center",
-
-    gap: 9,
-  },
-
-  fileButtonText: {
-    color: "#2563eb",
-
-    fontSize: 15,
-
-    fontWeight: "800",
   },
 
   transferList: {
@@ -4826,214 +4571,89 @@ const styles = StyleSheet.create({
   },
 
   transferItem: {
-    backgroundColor: "#f8fafc",
-
+    backgroundColor: "#0f172a",
     borderRadius: 13,
-
     padding: 12,
-
     marginTop: 9,
-
     borderWidth: 1,
-
-    borderColor: "#e2e8f0",
+    borderColor: "#334155",
   },
 
   transferTop: {
     flexDirection: "row",
-
     alignItems: "center",
   },
 
   transferInfo: {
     flex: 1,
-
     marginHorizontal: 9,
   },
 
   transferName: {
     fontSize: 14,
-
     fontWeight: "700",
-
-    color: "#0f172a",
+    color: "#f1f5f9",
   },
 
   transferSize: {
     marginTop: 3,
-
     fontSize: 11,
-
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   progressText: {
     fontSize: 13,
-
     fontWeight: "800",
-
-    color: "#2563eb",
+    color: "#818cf8",
   },
 
   transferStatus: {
     marginTop: 6,
-
     fontSize: 11,
-
-    color: "#64748b",
+    color: "#94a3b8",
   },
 
   syncFileIdText: {
     marginTop: 5,
-
     fontSize: 10,
-
-    color: "#94a3b8",
+    color: "#64748b",
   },
 
   unpairButton: {
     minHeight: 48,
-
     borderRadius: 12,
-
-    backgroundColor: "#fef2f2",
-
+    backgroundColor: "#450a0a",
     borderWidth: 1,
-
-    borderColor: "#fecaca",
-
+    borderColor: "#7f1d1d",
     flexDirection: "row",
-
     alignItems: "center",
-
     justifyContent: "center",
-
     marginBottom: 10,
-
     gap: 7,
   },
 
   unpairText: {
-    color: "#dc2626",
-
+    color: "#f87171",
     fontSize: 14,
-
     fontWeight: "800",
-  },
-
-  testButton: {
-    minHeight: 48,
-
-    borderRadius: 12,
-
-    backgroundColor: "#eff6ff",
-
-    borderWidth: 1,
-
-    borderColor: "#bfdbfe",
-
-    flexDirection: "row",
-
-    alignItems: "center",
-
-    justifyContent: "center",
-
-    marginBottom: 14,
-
-    gap: 7,
-  },
-
-  testText: {
-    color: "#2563eb",
-
-    fontSize: 14,
-
-    fontWeight: "800",
-  },
-
-  countText: {
-    minWidth: 28,
-
-    height: 28,
-
-    borderRadius: 14,
-
-    backgroundColor: "#eff6ff",
-
-    color: "#2563eb",
-
-    textAlign: "center",
-
-    textAlignVertical: "center",
-
-    fontWeight: "700",
-
-    paddingTop: 4,
-  },
-
-  debugType: {
-    fontSize: 13,
-
-    fontWeight: "700",
-
-    color: "#2563eb",
   },
 
   infoBox: {
     flexDirection: "row",
-
     alignItems: "center",
-
-    backgroundColor: "#eff6ff",
-
+    backgroundColor: "#1e293b",
+    borderWidth: 1,
+    borderColor: "#334155",
     borderRadius: 13,
-
     padding: 13,
-
     marginBottom: 12,
   },
 
   infoText: {
     flex: 1,
-
     marginLeft: 8,
-
     fontSize: 12,
-
     lineHeight: 19,
-
-    color: "#475569",
-  },
-
-  techBox: {
-    backgroundColor: "#f8fafc",
-
-    borderRadius: 13,
-
-    borderWidth: 1,
-
-    borderColor: "#e2e8f0",
-
-    padding: 14,
-
-    marginBottom: 20,
-  },
-
-  techTitle: {
-    fontSize: 14,
-
-    fontWeight: "800",
-
-    color: "#334155",
-
-    marginBottom: 8,
-  },
-
-  techText: {
-    fontSize: 11,
-
-    lineHeight: 19,
-
-    color: "#64748b",
+    color: "#94a3b8",
   },
 })

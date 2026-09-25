@@ -204,6 +204,7 @@ export default function SyncScreen() {
   const [trustedPc, setTrustedPc] = useState(null)
 
   const [databaseSyncing, setDatabaseSyncing] = useState(false)
+  const [caseFilesSyncSuccess, setCaseFilesSyncSuccess] = useState(false)
 
   /* ============================================================
    * DATABASE SYNC REFS
@@ -849,6 +850,386 @@ export default function SyncScreen() {
       files,
     }
   }, [])
+
+  /* ============================================================
+ * CASE FILES SYNC
+ *
+ * ANDROID -> PC
+ *
+ * Prepare Android files requested by PC
+ * ============================================================ */
+
+const handleCaseFilesUploadRequests = useCallback(
+  async requests => {
+    if (!Array.isArray(requests) || requests.length === 0) {
+      console.log(
+        "CASE FILES UPLOAD REQUESTS: NO REQUESTS",
+      )
+
+      return
+    }
+
+    if (!isTrusted) {
+      console.error(
+        "CASE FILES UPLOAD REQUESTS REJECTED: DEVICE_NOT_TRUSTED",
+      )
+
+      return
+    }
+
+    const baseDirectory =
+      FileSystem.documentDirectory
+
+    if (!baseDirectory) {
+      console.error(
+        "CASE FILES UPLOAD REQUESTS ERROR: ANDROID_DOCUMENT_DIRECTORY_NOT_AVAILABLE",
+      )
+
+      return
+    }
+
+    const rootDirectory =
+      `${baseDirectory}documents/`
+
+    for (const request of requests) {
+      try {
+        const relativePath =
+          request?.relativePath || null
+
+        const entityId =
+          request?.entityId || null
+
+        const fileName =
+          request?.fileName ||
+          "file"
+
+        const fileSize =
+          Number(request?.fileSize || 0)
+
+        const mimeType =
+          request?.mimeType ||
+          "application/octet-stream"
+
+        /* ----------------------------------------------------
+         * Validate relativePath
+         * ---------------------------------------------------- */
+
+        const normalizedRelativePath =
+          normalizeCaseFileRelativePath(
+            relativePath,
+          )
+
+        if (
+          !normalizedRelativePath ||
+          !isSafeCaseFileRelativePath(
+            normalizedRelativePath,
+          )
+        ) {
+          console.error(
+            "CASE FILE UPLOAD REQUEST REJECTED: INVALID RELATIVE PATH",
+            {
+              relativePath,
+              request,
+            },
+          )
+
+          continue
+        }
+
+        const pathEntityId =
+          extractCaseFileEntityId(
+            normalizedRelativePath,
+          )
+
+        const pathFileName =
+          extractCaseFileName(
+            normalizedRelativePath,
+          )
+
+        if (!pathEntityId || !pathFileName) {
+          console.error(
+            "CASE FILE UPLOAD REQUEST REJECTED: INVALID PATH PARTS",
+            {
+              relativePath:
+                normalizedRelativePath,
+            },
+          )
+
+          continue
+        }
+
+        if (
+          entityId &&
+          String(entityId) !==
+            String(pathEntityId)
+        ) {
+          console.error(
+            "CASE FILE UPLOAD REQUEST REJECTED: ENTITY ID MISMATCH",
+            {
+              entityId,
+              pathEntityId,
+              relativePath:
+                normalizedRelativePath,
+            },
+          )
+
+          continue
+        }
+
+        /* ----------------------------------------------------
+         * Canonical Android path:
+         *
+         * documents/
+         *   <entityId>/
+         *     <fileName>
+         * ---------------------------------------------------- */
+
+        const safeEntityId =
+          sanitizePathPart(
+            pathEntityId,
+            "folder",
+          )
+
+        const safeFileName =
+          sanitizePathPart(
+            pathFileName,
+            "file",
+          )
+
+        const fileUri =
+          `${rootDirectory}${safeEntityId}/${safeFileName}`
+
+        const info =
+          await FileSystem.getInfoAsync(
+            fileUri,
+          )
+
+        if (
+          !info.exists ||
+          info.isDirectory === true
+        ) {
+          console.error(
+            "CASE FILE UPLOAD REQUEST REJECTED: FILE NOT FOUND",
+            {
+              relativePath:
+                normalizedRelativePath,
+              fileUri,
+            },
+          )
+
+          continue
+        }
+
+        const actualFileSize =
+          Number(info.size || 0)
+
+        /* ----------------------------------------------------
+         * One requestId per upload
+         * ---------------------------------------------------- */
+
+        const requestId =
+          Crypto.randomUUID()
+
+        /* ----------------------------------------------------
+         * Store pending upload
+         *
+         * IMPORTANT:
+         * direction = ANDROID_TO_PC
+         * caseFileSync = true
+         * ---------------------------------------------------- */
+
+        const pendingFile = {
+          requestId,
+
+          transferId: null,
+
+          uri: fileUri,
+
+          name: safeFileName,
+
+          fileName: safeFileName,
+
+          size:
+            Number.isFinite(fileSize) &&
+            fileSize > 0
+              ? fileSize
+              : actualFileSize,
+
+          mimeType,
+
+          relativePath:
+            normalizedRelativePath,
+
+          entityType:
+            request?.entityType ||
+            "case",
+
+          entityId:
+            pathEntityId,
+
+          syncFileId: null,
+
+          caseFileSync: true,
+
+          direction:
+            "ANDROID_TO_PC",
+
+          databaseFile: false,
+
+          receivedFile: false,
+
+        }
+
+        pendingFilesRef.current.set(
+          requestId,
+          pendingFile,
+        )
+
+        /* ----------------------------------------------------
+         * UI
+         * ---------------------------------------------------- */
+
+        setTransfers(prev => [
+          ...prev,
+          {
+            id: requestId,
+
+            requestId,
+
+            transferId: null,
+
+            fileName: safeFileName,
+
+            total: pendingFile.size,
+
+            transferred: 0,
+
+            progress: 0,
+
+            status: "waiting",
+
+            direction:
+              "ANDROID_TO_PC",
+
+            relativePath:
+              normalizedRelativePath,
+
+            entityType:
+              pendingFile.entityType,
+
+            entityId:
+              pathEntityId,
+
+            syncFileId: null,
+
+            uri: fileUri,
+
+          },
+        ])
+
+        console.log(
+          "========================================",
+        )
+
+        console.log(
+          "CASE FILE UPLOAD REQUEST PREPARED:",
+          {
+            requestId,
+
+            fileName:
+              safeFileName,
+
+            fileSize:
+              pendingFile.size,
+
+            mimeType,
+
+            relativePath:
+              normalizedRelativePath,
+
+            entityId:
+              pathEntityId,
+
+            fileUri,
+
+          },
+        )
+
+        console.log(
+          "========================================",
+        )
+
+        /* ----------------------------------------------------
+         * Tell Windows:
+         *
+         * Android wants to upload this file
+         * ---------------------------------------------------- */
+
+        AvocatoFlow.sendMessage(
+          JSON.stringify({
+            type: "FILE_REQUEST",
+
+            version: 1,
+
+            requestId,
+
+            timestamp: Date.now(),
+
+            payload: {
+              requestId,
+
+              fileName:
+                safeFileName,
+
+              fileSize:
+                pendingFile.size,
+
+              mimeType,
+
+              relativePath:
+                normalizedRelativePath,
+
+              entityType:
+                pendingFile.entityType,
+
+              entityId:
+                pathEntityId,
+
+              caseFileSync: true,
+            },
+          }),
+        )
+
+        console.log(
+          "CASE FILE FILE_REQUEST SENT TO PC:",
+          {
+            requestId,
+
+            fileName:
+              safeFileName,
+
+            relativePath:
+              normalizedRelativePath,
+
+            entityId:
+              pathEntityId,
+          },
+        )
+      } catch (error) {
+        console.error(
+          "CASE FILE UPLOAD REQUEST ERROR:",
+          {
+            request,
+            error:
+              error?.message ||
+              String(error),
+          },
+        )
+      }
+    }
+  },
+  [isTrusted],
+)
 
   /* ============================================================
    * CASE FILES SYNC REQUEST
@@ -1627,41 +2008,41 @@ export default function SyncScreen() {
 
         console.log("SYNC FILE ID TO DELETE:", syncFileId)
 
-        try {
-          const beforeDelete = await db
-            .select()
-            .from(schema.syncFiles)
-            .where(eq(schema.syncFiles.id, syncFileId))
+        // try {
+        //   const beforeDelete = await db
+        //     .select()
+        //     .from(schema.syncFiles)
+        //     .where(eq(schema.syncFiles.id, syncFileId))
 
-          console.log(
-            "SYNC FILE BEFORE DELETE:",
-            JSON.stringify(beforeDelete, null, 2),
-          )
+        //   console.log(
+        //     "SYNC FILE BEFORE DELETE:",
+        //     JSON.stringify(beforeDelete, null, 2),
+        //   )
 
-          if (beforeDelete.length === 0) {
-            console.warn("SYNC FILE NOT FOUND BEFORE DELETE:", syncFileId)
-          } else {
-            const deletedRows = await db
-              .delete(schema.syncFiles)
-              .where(eq(schema.syncFiles.id, syncFileId))
-              .returning()
+        //   if (beforeDelete.length === 0) {
+        //     console.warn("SYNC FILE NOT FOUND BEFORE DELETE:", syncFileId)
+        //   } else {
+        //     const deletedRows = await db
+        //       .delete(schema.syncFiles)
+        //       .where(eq(schema.syncFiles.id, syncFileId))
+        //       .returning()
 
-            console.log("DELETE RESULT:", JSON.stringify(deletedRows, null, 2))
+        //     console.log("DELETE RESULT:", JSON.stringify(deletedRows, null, 2))
 
-            const afterDelete = await db
-              .select()
-              .from(schema.syncFiles)
-              .where(eq(schema.syncFiles.id, syncFileId))
+        //     const afterDelete = await db
+        //       .select()
+        //       .from(schema.syncFiles)
+        //       .where(eq(schema.syncFiles.id, syncFileId))
 
-            if (afterDelete.length === 0) {
-              console.log("SYNC FILE SUCCESSFULLY DELETED:", syncFileId)
-            } else {
-              console.error("SYNC FILE STILL EXISTS AFTER DELETE:", syncFileId)
-            }
-          }
-        } catch (error) {
-          console.error("DELETE SYNC FILE ERROR:", error)
-        }
+        //     if (afterDelete.length === 0) {
+        //       console.log("SYNC FILE SUCCESSFULLY DELETED:", syncFileId)
+        //     } else {
+        //       console.error("SYNC FILE STILL EXISTS AFTER DELETE:", syncFileId)
+        //     }
+        //   }
+        // } catch (error) {
+        //   console.error("DELETE SYNC FILE ERROR:", error)
+        // }
       }
 
       /*
@@ -2146,6 +2527,7 @@ export default function SyncScreen() {
         caseFilesSyncRequestRef.current = null
 
         caseFilesSyncRunningRef.current = false
+        setCaseFilesSyncSuccess(true)
 
         return
       }
@@ -2481,6 +2863,45 @@ export default function SyncScreen() {
 
         return
       }
+
+      /* ======================================================
+ * CASE_FILES_UPLOAD_REQUESTS
+ *
+ * PC -> Android:
+ * Windows asks Android to upload files
+ * ====================================================== */
+
+if (type === "CASE_FILES_UPLOAD_REQUESTS") {
+  const requests =
+    payload?.requests ||
+    message?.requests ||
+    []
+
+  console.log(
+    "========================================",
+  )
+
+  console.log(
+    "CASE_FILES_UPLOAD_REQUESTS RECEIVED:",
+    {
+      count: Array.isArray(requests)
+        ? requests.length
+        : 0,
+
+      requests,
+    },
+  )
+
+  console.log(
+    "========================================",
+  )
+
+  await handleCaseFilesUploadRequests(
+    requests,
+  )
+
+  return
+}
 
       /* ======================================================
        * FILE_SEND_REQUEST
@@ -2985,27 +3406,99 @@ export default function SyncScreen() {
        * ====================================================== */
 
       if (type === "FILE_COMPLETE") {
-        const transferId = payload?.transferId || message?.transferId
+  const transferId =
+    payload?.transferId ||
+    message?.transferId
 
-        console.log("FILE_COMPLETE MESSAGE:", JSON.stringify(message, null, 2))
+  console.log(
+    "FILE_COMPLETE MESSAGE:",
+    JSON.stringify(message, null, 2),
+  )
 
-        const requestId = resolveRequestId(message, payload)
+  const requestId =
+    resolveRequestId(
+      message,
+      payload,
+    )
 
-        if (!requestId) {
-          console.warn("FILE_COMPLETE: REQUEST ID NOT FOUND", {
-            transferId,
-            message,
+  if (!requestId) {
+    console.warn(
+      "FILE_COMPLETE: REQUEST ID NOT FOUND",
+      {
+        transferId,
+        message,
+        pendingFiles:
+          Array.from(
+            pendingFilesRef.current.entries(),
+          ),
+      },
+    )
 
-            pendingFiles: Array.from(pendingFilesRef.current.entries()),
-          })
+    return
+  }
 
-          return
-        }
+  const pendingFile =
+    pendingFilesRef.current.get(
+      requestId,
+    )
 
-        await markTransferCompleted(requestId)
+  /*
+   * ========================================================
+   * ANDROID -> PC
+   *
+   * Android already uploaded the file.
+   *
+   * The native upload completion has already called
+   * markTransferCompleted().
+   *
+   * Windows sends FILE_COMPLETE as a final acknowledgement.
+   *
+   * DO NOT call markTransferCompleted() again.
+   * ========================================================
+   */
 
-        return
-      }
+  if (
+    pendingFile?.caseFileSync === true &&
+    pendingFile?.direction ===
+      "ANDROID_TO_PC"
+  ) {
+    console.log(
+      "CASE FILE ANDROID -> PC FILE_COMPLETE ACK RECEIVED:",
+      {
+        requestId,
+        transferId,
+        relativePath:
+          pendingFile.relativePath,
+      },
+    )
+
+    /*
+     * The upload is already completed.
+     * This message is only the PC acknowledgement.
+     *
+     * Remove the pending entry if it still exists.
+     */
+    pendingFilesRef.current.delete(
+      requestId,
+    )
+
+    return
+  }
+
+  /*
+   * ========================================================
+   * PC -> ANDROID
+   *
+   * This is the normal incoming file completion path.
+   * ========================================================
+   */
+
+  await markTransferCompleted(
+    requestId,
+  )
+
+  return
+}
 
       /* ======================================================
        * FILE_ERROR
@@ -3077,6 +3570,7 @@ export default function SyncScreen() {
     downloadIncomingFile,
     handleIncomingFileError,
     sendFileSendAccept,
+    handleCaseFilesUploadRequests,
   ])
 
   /* ============================================================
@@ -4189,141 +4683,115 @@ export default function SyncScreen() {
    * DATABASE FILE AUTO SYNC
    * ============================================================ */
 
-  const syncDatabaseFiles = useCallback(async () => {
-    console.log("=== DATABASE AUTO SYNC START ===")
+  // const syncDatabaseFiles = useCallback(async () => {
+  //   console.log("=== DATABASE AUTO SYNC START ===")
 
-    if (!connectedDeviceRef.current) {
-      console.log("AUTO SYNC STOP: no connected device")
+  //   if (!connectedDeviceRef.current) {
+  //     console.log("AUTO SYNC STOP: no connected device")
 
-      return
-    }
+  //     return
+  //   }
 
-    if (!isTrusted) {
-      console.log("AUTO SYNC STOP: device not trusted")
+  //   if (!isTrusted) {
+  //     console.log("AUTO SYNC STOP: device not trusted")
 
-      return
-    }
+  //     return
+  //   }
 
-    if (autoSyncStartedRef.current) {
-      console.log("AUTO SYNC STOP: already running")
+  //   if (autoSyncStartedRef.current) {
+  //     console.log("AUTO SYNC STOP: already running")
 
-      return
-    }
+  //     return
+  //   }
 
-    autoSyncStartedRef.current = true
+  //   autoSyncStartedRef.current = true
 
-    try {
-      console.log("AUTO SYNC: loading sync_files...")
+  //   try {
+  //     console.log("AUTO SYNC: loading sync_files...")
 
-      const files = await db.select().from(schema.syncFiles)
+  //     const files = await db.select().from(schema.syncFiles)
 
-      console.log("AUTO SYNC FILES:", files)
+  //     console.log("AUTO SYNC FILES:", files)
 
-      for (const file of files) {
-        if (!connectedDeviceRef.current || !isTrusted) {
-          console.log("AUTO SYNC STOP: connection lost")
+  //     for (const file of files) {
+  //       if (!connectedDeviceRef.current || !isTrusted) {
+  //         console.log("AUTO SYNC STOP: connection lost")
 
-          break
-        }
+  //         break
+  //       }
 
-        if (!file?.uri) {
-          console.warn("AUTO SYNC SKIP: URI missing", file)
+  //       if (!file?.uri) {
+  //         console.warn("AUTO SYNC SKIP: URI missing", file)
 
-          continue
-        }
+  //         continue
+  //       }
 
-        if (autoSyncFilesRef.current.has(file.id)) {
-          console.log("AUTO SYNC SKIP: already sent", file.id)
+  //       if (autoSyncFilesRef.current.has(file.id)) {
+  //         console.log("AUTO SYNC SKIP: already sent", file.id)
 
-          continue
-        }
+  //         continue
+  //       }
 
-        autoSyncFilesRef.current.add(file.id)
+  //       autoSyncFilesRef.current.add(file.id)
 
-        console.log("AUTO SYNC SENDING:", {
-          id: file.id,
+  //       console.log("AUTO SYNC SENDING:", {
+  //         id: file.id,
 
-          fileName: file.fileName,
+  //         fileName: file.fileName,
 
-          uri: file.uri,
+  //         uri: file.uri,
 
-          relativePath: file.relativePath,
-        })
+  //         relativePath: file.relativePath,
+  //       })
 
-        try {
-          const result = await sendDatabaseFile(file)
+  //       try {
+  //         const result = await sendDatabaseFile(file)
 
-          if (!result?.requestId || !result?.completionPromise) {
-            throw new Error("FILE_REQUEST_FAILED")
-          }
+  //         if (!result?.requestId || !result?.completionPromise) {
+  //           throw new Error("FILE_REQUEST_FAILED")
+  //         }
 
-          autoSyncCurrentRef.current = result.requestId
+  //         autoSyncCurrentRef.current = result.requestId
 
-          await result.completionPromise
+  //         await result.completionPromise
 
-          console.log("AUTO SYNC COMPLETED:", file.fileName)
-        } catch (error) {
-          console.error("AUTO SYNC FILE ERROR:", file.fileName, error)
+  //         console.log("AUTO SYNC COMPLETED:", file.fileName)
+  //       } catch (error) {
+  //         console.error("AUTO SYNC FILE ERROR:", file.fileName, error)
 
-          autoSyncFilesRef.current.delete(file.id)
+  //         autoSyncFilesRef.current.delete(file.id)
 
-          autoSyncCurrentRef.current = null
+  //         autoSyncCurrentRef.current = null
 
-          if (error?.message === "CONNECTION_CLOSED") {
-            console.log("AUTO SYNC STOPPED: CONNECTION_CLOSED")
+  //         if (error?.message === "CONNECTION_CLOSED") {
+  //           console.log("AUTO SYNC STOPPED: CONNECTION_CLOSED")
 
-            break
-          }
-        }
+  //           break
+  //         }
+  //       }
 
-        await new Promise(resolve => setTimeout(resolve, 150))
-      }
+  //       await new Promise(resolve => setTimeout(resolve, 150))
+  //     }
 
-      console.log("=== DATABASE AUTO SYNC FINISHED ===")
-    } catch (error) {
-      console.error("DATABASE AUTO SYNC ERROR:", error)
-    } finally {
-      autoSyncStartedRef.current = false
+  //     console.log("=== DATABASE AUTO SYNC FINISHED ===")
+  //   } catch (error) {
+  //     console.error("DATABASE AUTO SYNC ERROR:", error)
+  //   } finally {
+  //     autoSyncStartedRef.current = false
 
-      autoSyncCurrentRef.current = null
-    }
-  }, [db, isTrusted, sendDatabaseFile])
+  //     autoSyncCurrentRef.current = null
+  //   }
+  // }, [db, isTrusted, sendDatabaseFile])
 
-  useEffect(() => {
-    syncDatabaseFilesRef.current = syncDatabaseFiles
-  }, [syncDatabaseFiles])
+  // useEffect(() => {
+  //   syncDatabaseFilesRef.current = syncDatabaseFiles
+  // }, [syncDatabaseFiles])
 
   /* ============================================================
    * START CASE FILES SYNC AFTER CONNECT
    *
    * IMPORTANT:
    * Completely independent from sync_files.
-   * ============================================================ */
-
-  // useEffect(() => {
-  //   if (!connectedDevice) {
-  //     return
-  //   }
-
-  //   if (!isTrusted) {
-  //     return
-  //   }
-
-  //   const timer = setTimeout(() => {
-  //     startCaseFilesSync()
-  //   }, 1500)
-
-  //   return () => {
-  //     clearTimeout(timer)
-  //   }
-  // }, [
-  //   connectedDevice,
-  //   isTrusted,
-  //   startCaseFilesSync,
-  // ])
-
-  /* ============================================================
-   * START FILE AUTO SYNC AFTER CONNECT
    * ============================================================ */
 
   useEffect(() => {
@@ -4336,15 +4804,42 @@ export default function SyncScreen() {
     }
 
     const timer = setTimeout(() => {
-      if (syncDatabaseFilesRef.current) {
-        syncDatabaseFilesRef.current()
-      }
-    }, 500)
+      startCaseFilesSync()
+    }, 1500)
 
     return () => {
       clearTimeout(timer)
     }
-  }, [connectedDevice, isTrusted])
+  }, [
+    connectedDevice,
+    isTrusted,
+    startCaseFilesSync,
+  ])
+
+  /* ============================================================
+   * START FILE AUTO SYNC AFTER CONNECT
+   * ============================================================ */
+
+  // useEffect(() => {
+  //   if (!connectedDevice) {
+  //     return
+  //   }
+
+  //   if (!isTrusted) {
+  //     return
+  //   }
+
+  //   const timer = setTimeout(() => {
+  //     if (syncDatabaseFilesRef.current) {
+  //       syncDatabaseFilesRef.current()
+  //     }
+  //   }, 500)
+    
+
+  //   return () => {
+  //     clearTimeout(timer)
+  //   }
+  // }, [connectedDevice, isTrusted])
 
   /* ============================================================
    * START DATABASE SYNC AFTER CONNECT
@@ -5117,6 +5612,37 @@ export default function SyncScreen() {
             </Text>
           </View>
         )}
+
+        
+{caseFilesSyncSuccess ? (
+  <View style={{
+              flexDirection: "row",
+              alignItems: "center",
+              backgroundColor: "#064e3b",
+              borderWidth: 1,
+              borderColor: "#047857",
+              borderRadius: 13,
+              padding: 13,
+              marginBottom: 12,
+            }}>
+    <MaterialIcons
+      name="check-circle"
+      size={24}
+      color="#16a34a"
+    />
+
+    <Text style={{
+                flex: 1,
+                marginLeft: 8,
+                fontSize: 13,
+                fontWeight: "700",
+                color: "#d1fae5",
+              }}>
+      تمت مزامنة الملفات بنجاح
+    </Text>
+  </View>
+) : null}
+
 
         {/* ======================================================
           TRANSFERS

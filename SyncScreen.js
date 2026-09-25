@@ -25,6 +25,7 @@ import * as Crypto from "expo-crypto"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import * as DocumentPicker from "expo-document-picker"
 import * as FileSystem from "expo-file-system/legacy"
+import { File } from "expo-file-system"
 
 import { MaterialIcons } from "@react-native-vector-icons/material-icons"
 
@@ -77,7 +78,91 @@ function sanitizeRelativePath(value) {
 
   return normalized || null
 }
+/* ============================================================
+ * CASE FILES SYNC - FLAT PATH HELPERS
+ *
+ * Canonical path:
+ *
+ * <entityId>/<fileName>
+ *
+ * No subdirectories are allowed.
+ * ============================================================ */
 
+function normalizeCaseFileRelativePath(value) {
+  if (!value) {
+    return null
+  }
+
+  const normalized = String(value)
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .trim()
+
+  return normalized || null
+}
+
+function isSafeCaseFileRelativePath(value) {
+  const normalized = normalizeCaseFileRelativePath(value)
+
+  if (!normalized) {
+    return false
+  }
+
+  // Absolute Windows path
+  if (/^[A-Za-z]:[\\/]/.test(normalized)) {
+    return false
+  }
+
+  // UNC path
+  if (normalized.startsWith("//")) {
+    return false
+  }
+
+  const parts = normalized.split("/")
+
+  // EXACTLY:
+  //
+  // entityId/fileName
+  //
+  // No nested folders.
+  if (parts.length !== 2) {
+    return false
+  }
+
+  if (!parts[0] || !parts[1]) {
+    return false
+  }
+
+  if (
+    parts.some(part => {
+      return part === "." || part === ".." || part.includes("\0")
+    })
+  ) {
+    return false
+  }
+
+  return true
+}
+
+function extractCaseFileEntityId(relativePath) {
+  const normalized = normalizeCaseFileRelativePath(relativePath)
+
+  if (!isSafeCaseFileRelativePath(normalized)) {
+    return null
+  }
+
+  return normalized.split("/")[0]
+}
+
+function extractCaseFileName(relativePath) {
+  const normalized = normalizeCaseFileRelativePath(relativePath)
+
+  if (!isSafeCaseFileRelativePath(normalized)) {
+    return null
+  }
+
+  return normalized.split("/")[1]
+}
 /* ============================================================
  * SCREEN
  * ============================================================ */
@@ -168,6 +253,25 @@ export default function SyncScreen() {
   const autoSyncWaitersRef = useRef(new Map())
 
   const syncDatabaseFilesRef = useRef(null)
+
+  /* ============================================================
+   * CASE FILES SYNC REFS
+   *
+   * NEW filesystem-based sync.
+   *
+   * IMPORTANT:
+   * This is completely independent from:
+   *
+   * sync_files
+   * databaseFile
+   * autoSync*
+   * ============================================================ */
+
+  const caseFilesSyncRunningRef = useRef(false)
+
+  const caseFilesSyncRequestRef = useRef(null)
+
+  const caseFilesSyncGenerationRef = useRef(0)
 
   /* ============================================================
    * PC -> ANDROID DOWNLOADS
@@ -456,7 +560,57 @@ export default function SyncScreen() {
   )
 
   const getIncomingFileDestination = useCallback(
-    async ({ fileName, relativePath, entityType, entityId }) => {
+    async ({
+      fileName,
+      relativePath,
+      entityType,
+      entityId,
+      caseFileSync = false,
+    }) => {
+      /*
+       * ============================================================
+       * NEW CASE FILE SYNC
+       *
+       * Canonical path:
+       *
+       * entityId/fileName
+       *
+       * Never create:
+       *
+       * entityId/folder/file
+       * ============================================================
+       */
+      if (caseFileSync === true) {
+        const normalizedRelativePath =
+          normalizeCaseFileRelativePath(relativePath)
+
+        if (
+          !normalizedRelativePath ||
+          !isSafeCaseFileRelativePath(normalizedRelativePath)
+        ) {
+          throw new Error("CASE_FILE_SUBDIRECTORIES_NOT_ALLOWED")
+        }
+
+        const pathEntityId = extractCaseFileEntityId(normalizedRelativePath)
+
+        const pathFileName = extractCaseFileName(normalizedRelativePath)
+
+        if (!pathEntityId || !pathFileName) {
+          throw new Error("CASE_FILE_RELATIVE_PATH_INVALID")
+        }
+
+        if (entityId && String(entityId) !== String(pathEntityId)) {
+          throw new Error("ENTITY_ID_MISMATCH")
+        }
+
+        const safeEntityId = sanitizePathPart(pathEntityId, "folder")
+
+        const safeFileName = sanitizePathPart(pathFileName, "received-file")
+
+        const directory = await ensureReceivedDirectory(null, safeEntityId)
+
+        return `${directory}${safeFileName}`
+      }
       const safeFileName = sanitizePathPart(
         fileName || "received-file",
         "received-file",
@@ -548,6 +702,231 @@ export default function SyncScreen() {
   )
 
   /* ============================================================
+   * CASE FILES SYNC - ANDROID MANIFEST
+   * ============================================================ */
+
+  const buildCaseFilesManifest = useCallback(async () => {
+    const baseDirectory = FileSystem.documentDirectory
+
+    if (!baseDirectory) {
+      throw new Error("ANDROID_DOCUMENT_DIRECTORY_NOT_AVAILABLE")
+    }
+
+    const rootDirectory = `${baseDirectory}documents/`
+
+    const rootInfo = await FileSystem.getInfoAsync(rootDirectory)
+
+    if (!rootInfo.exists) {
+      return {
+        generatedAt: new Date().toISOString(),
+        total: 0,
+        files: [],
+      }
+    }
+
+    const rootEntries = await FileSystem.readDirectoryAsync(rootDirectory)
+
+    const files = []
+
+    for (const entityEntry of rootEntries) {
+      /*
+       * Entity folders only.
+       */
+      const entityId = sanitizePathPart(entityEntry, "")
+
+      if (!entityId) {
+        continue
+      }
+
+      const entityDirectory = `${rootDirectory}${entityId}/`
+
+      let entityInfo
+
+      try {
+        entityInfo = await FileSystem.getInfoAsync(entityDirectory)
+      } catch (error) {
+        console.warn("CASE FILES MANIFEST ENTITY INFO ERROR:", entityId, error)
+
+        continue
+      }
+
+      if (!entityInfo.exists || entityInfo.isDirectory !== true) {
+        continue
+      }
+
+      let entries
+
+      try {
+        entries = await FileSystem.readDirectoryAsync(entityDirectory)
+      } catch (error) {
+        console.warn("CASE FILES MANIFEST READ ENTITY ERROR:", entityId, error)
+
+        continue
+      }
+
+      /*
+       * Only direct files are allowed.
+       *
+       * Any subdirectory is ignored.
+       */
+      for (const fileEntry of entries) {
+        const fileName = sanitizePathPart(fileEntry, "")
+
+        if (!fileName) {
+          continue
+        }
+
+        const relativePath = `${entityId}/${fileName}`
+
+        if (!isSafeCaseFileRelativePath(relativePath)) {
+          console.warn("CASE FILES MANIFEST INVALID PATH:", relativePath)
+
+          continue
+        }
+
+        const fileUri = `${entityDirectory}${fileName}`
+
+        let info
+
+        try {
+          info = await FileSystem.getInfoAsync(fileUri)
+        } catch (error) {
+          console.warn("CASE FILES MANIFEST FILE INFO ERROR:", fileUri, error)
+
+          continue
+        }
+
+        /*
+         * Ignore directories.
+         */
+        if (!info.exists || info.isDirectory === true) {
+          continue
+        }
+
+        const size = Number(info.size || 0)
+
+        let sha256 = null
+
+        /*
+         * SHA-256 using the modern Expo File API.
+         */
+        try {
+          sha256 = await AvocatoFlow.calculateFileHashAsync(fileUri)
+
+          if (sha256) {
+            sha256 = String(sha256).toLowerCase()
+          }
+        } catch (error) {
+          console.error("CASE FILES SHA256 ERROR:", fileUri, error)
+
+          sha256 = null
+        }
+
+        files.push({
+          entityId,
+          relativePath,
+          fileName,
+          size,
+          sha256,
+          modifiedAt: info.modificationTime
+            ? new Date(info.modificationTime * 1000).toISOString()
+            : null,
+          createdAt: null,
+        })
+      }
+    }
+
+    files.sort((a, b) =>
+      a.relativePath.localeCompare(b.relativePath, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    )
+
+    return {
+      generatedAt: new Date().toISOString(),
+      total: files.length,
+      files,
+    }
+  }, [])
+
+  /* ============================================================
+   * CASE FILES SYNC REQUEST
+   * ============================================================ */
+
+  const startCaseFilesSync = useCallback(async () => {
+    if (!connectedDeviceRef.current) {
+      console.log("CASE FILES SYNC SKIPPED: NO CONNECTED DEVICE")
+
+      return
+    }
+
+    if (!isTrusted) {
+      console.log("CASE FILES SYNC SKIPPED: DEVICE NOT TRUSTED")
+
+      return
+    }
+
+    if (caseFilesSyncRunningRef.current) {
+      console.log("CASE FILES SYNC SKIPPED: ALREADY RUNNING")
+
+      return
+    }
+
+    caseFilesSyncRunningRef.current = true
+
+    const generation = ++caseFilesSyncGenerationRef.current
+
+    const requestId = Crypto.randomUUID()
+
+    try {
+      const manifest = await buildCaseFilesManifest()
+
+      if (generation !== caseFilesSyncGenerationRef.current) {
+        return
+      }
+
+      caseFilesSyncRequestRef.current = {
+        requestId,
+        startedAt: Date.now(),
+      }
+
+      console.log("========================================")
+
+      console.log("CASE FILES SYNC REQUEST:", {
+        requestId,
+        total: manifest.total,
+      })
+
+      console.log("========================================")
+
+      AvocatoFlow.sendMessage(
+        JSON.stringify({
+          type: "CASE_FILES_SYNC_REQUEST",
+
+          version: 1,
+
+          requestId,
+
+          timestamp: Date.now(),
+
+          payload: {
+            requestId,
+
+            manifest,
+          },
+        }),
+      )
+    } catch (error) {
+      console.error("CASE FILES SYNC START ERROR:", error)
+
+      caseFilesSyncRequestRef.current = null
+
+      caseFilesSyncRunningRef.current = false
+    }
+  }, [buildCaseFilesManifest, isTrusted])
+
+  /* ============================================================
    * PC -> ANDROID DOWNLOAD
    *
    * IMPORTANT:
@@ -573,6 +952,7 @@ export default function SyncScreen() {
       entityType,
       entityId,
       syncFileId,
+      caseFileSync = false,
     }) => {
       if (!requestId) {
         throw new Error("REQUEST_ID_MISSING")
@@ -609,6 +989,7 @@ export default function SyncScreen() {
         relativePath,
         entityType,
         entityId,
+        caseFileSync,
       })
 
       console.log("========================================")
@@ -817,6 +1198,7 @@ export default function SyncScreen() {
         entityId: entityId || null,
 
         syncFileId: syncFileId || null,
+        caseFileSync,
 
         direction: "PC_TO_ANDROID",
 
@@ -1023,7 +1405,6 @@ export default function SyncScreen() {
     async requestId => {
       if (!requestId) {
         console.warn("MARK COMPLETE: requestId missing")
-
         return
       }
 
@@ -1045,6 +1426,8 @@ export default function SyncScreen() {
 
       const isPcToAndroid = pendingFile.direction === "PC_TO_ANDROID"
 
+      const isCaseFileSync = pendingFile.caseFileSync === true
+
       setTransfers(prev =>
         prev.map(item => {
           if (item.requestId !== requestId) {
@@ -1058,6 +1441,8 @@ export default function SyncScreen() {
           return {
             ...item,
 
+            transferId: pendingFile?.transferId || item.transferId,
+
             transferred: finalTotal,
 
             total: finalTotal,
@@ -1070,11 +1455,169 @@ export default function SyncScreen() {
       )
 
       /*
-       * فقط Android -> PC database files
-       * يتم حذفها من syncFiles بعد التأكيد.
+       * =====================================================
+       * NEW CASE FILE SYNC
+       * PC -> ANDROID
+       * =====================================================
+       */
+
+      if (isPcToAndroid && isCaseFileSync) {
+        const receivedBytes = Number(pendingFile.size || 0)
+
+        console.log("========================================")
+
+        console.log("CASE FILE DOWNLOAD COMPLETED - SENDING FILE_COMPLETE", {
+          requestId,
+
+          transferId: pendingFile.transferId,
+
+          relativePath: pendingFile.relativePath,
+
+          entityId: pendingFile.entityId,
+
+          fileName: pendingFile.fileName || pendingFile.name,
+
+          receivedBytes,
+        })
+
+        try {
+          AvocatoFlow.sendMessage(
+            JSON.stringify({
+              type: "FILE_COMPLETE",
+              version: 1,
+              requestId,
+              timestamp: Date.now(),
+              payload: {
+                requestId,
+                transferId: pendingFile.transferId,
+                receivedBytes: Number(pendingFile.size || 0),
+                success: true,
+                relativePath: pendingFile.relativePath,
+                entityType: pendingFile.entityType,
+                entityId: pendingFile.entityId,
+                fileName: pendingFile.fileName || pendingFile.name,
+                caseFileSync: true,
+              },
+            }),
+          )
+
+          console.log("CASE FILE FILE_COMPLETE SENT TO PC:", {
+            requestId,
+
+            transferId: pendingFile.transferId,
+          })
+        } catch (error) {
+          console.error("CASE FILE FILE_COMPLETE SEND ERROR:", error)
+        }
+
+        console.log("========================================")
+      }
+
+      /*
+       * =====================================================
+       * OLD DATABASE SYNC SYSTEM
+       * =====================================================
+       *
+       * الكود الموجود عندك هنا يبقى كما هو تمامًا.
+       */
+
+      /*
+       * =====================================================
+       * إرسال FILE_COMPLETE
+       * =====================================================
+       *
+       * مهم:
+       *
+       * هذا خاص فقط بنظام
+       * CASE FILES SYNC الجديد.
+       *
+       * لا نلمس النظام القديم.
+       */
+
+      // if (
+      //   isCaseFileSync
+      // ) {
+      //   console.log(
+      //     "CASE FILE SYNC COMPLETE - SENDING FILE_COMPLETE:",
+      //     {
+      //       requestId,
+      //       transferId:
+      //         pendingFile.transferId,
+      //       direction:
+      //         pendingFile.direction,
+      //       relativePath:
+      //         pendingFile.relativePath,
+      //       entityId:
+      //         pendingFile.entityId,
+      //       fileName:
+      //         pendingFile.fileName ||
+      //         pendingFile.name,
+      //       receivedBytes:
+      //         pendingFile.size,
+      //     },
+      //   )
+
+      //   try {
+      //     AvocatoFlow.sendMessage(
+      //       "FILE_COMPLETE",
+      //       {
+      //         requestId,
+      //         transferId:
+      //           pendingFile.transferId,
+
+      //         receivedBytes:
+      //           Number(
+      //             pendingFile.size ||
+      //               0,
+      //           ),
+
+      //         success:
+      //           true,
+
+      //         relativePath:
+      //           pendingFile.relativePath,
+
+      //         entityId:
+      //           pendingFile.entityId,
+
+      //         entityType:
+      //           pendingFile.entityType,
+
+      //         fileName:
+      //           pendingFile.fileName ||
+      //           pendingFile.name,
+
+      //         caseFileSync:
+      //           true,
+      //       },
+      //     )
+
+      //     console.log(
+      //       "CASE FILE FILE_COMPLETE SENT:",
+      //       {
+      //         requestId,
+      //         transferId:
+      //           pendingFile.transferId,
+      //       },
+      //     )
+      //   } catch (error) {
+      //     console.error(
+      //       "CASE FILE FILE_COMPLETE SEND ERROR:",
+      //       error,
+      //     )
+      //   }
+      // }
+
+      /*
+       * =====================================================
+       * OLD DATABASE SYNC SYSTEM
+       * =====================================================
+       *
+       * لا يتم حذف syncFiles إلا للنظام القديم.
        *
        * PC -> Android لا يتم حذفها.
        */
+
       if (
         !isPcToAndroid &&
         pendingFile?.databaseFile &&
@@ -1120,6 +1663,12 @@ export default function SyncScreen() {
           console.error("DELETE SYNC FILE ERROR:", error)
         }
       }
+
+      /*
+       * =====================================================
+       * CLEANUP
+       * =====================================================
+       */
 
       pendingFilesRef.current.delete(requestId)
 
@@ -1584,6 +2133,38 @@ export default function SyncScreen() {
       const payload = message?.payload || {}
 
       /* ======================================================
+       * CASE_FILES_SYNC_COMPLETE
+       * ====================================================== */
+
+      if (type === "CASE_FILES_SYNC_COMPLETE") {
+        console.log("========================================")
+
+        console.log("CASE FILES SYNC COMPLETE:", payload)
+
+        console.log("========================================")
+
+        caseFilesSyncRequestRef.current = null
+
+        caseFilesSyncRunningRef.current = false
+
+        return
+      }
+
+      /* ======================================================
+       * CASE_FILES_SYNC_ERROR
+       * ====================================================== */
+
+      if (type === "CASE_FILES_SYNC_ERROR") {
+        console.error("CASE FILES SYNC ERROR:", payload)
+
+        caseFilesSyncRequestRef.current = null
+
+        caseFilesSyncRunningRef.current = false
+
+        return
+      }
+
+      /* ======================================================
        * DATABASE_SYNC_DATA
        * ====================================================== */
 
@@ -1928,6 +2509,9 @@ export default function SyncScreen() {
 
         const syncFileId = payload?.syncFileId || message?.syncFileId || null
 
+        const caseFileSync =
+          payload?.caseFileSync === true || message?.caseFileSync === true
+
         console.log("========================================")
 
         console.log("FILE_SEND_REQUEST RECEIVED:", {
@@ -2046,6 +2630,54 @@ export default function SyncScreen() {
           return
         }
 
+        if (caseFileSync) {
+          const normalizedRelativePath =
+            normalizeCaseFileRelativePath(relativePath)
+
+          if (
+            !normalizedRelativePath ||
+            !isSafeCaseFileRelativePath(normalizedRelativePath)
+          ) {
+            console.error(
+              "CASE FILE REQUEST REJECTED: INVALID RELATIVE PATH",
+              relativePath,
+            )
+
+            try {
+              AvocatoFlow.sendMessage(
+                JSON.stringify({
+                  type: "FILE_REJECT",
+                  version: 1,
+                  requestId,
+                  transferId,
+                  timestamp: Date.now(),
+                  payload: {
+                    requestId,
+                    transferId,
+                    message: "مسار ملف القضية غير صالح.",
+                    code: "CASE_FILE_SUBDIRECTORIES_NOT_ALLOWED",
+                  },
+                }),
+              )
+            } catch (error) {
+              console.error("CASE FILE FILE_REJECT ERROR:", error)
+            }
+
+            return
+          }
+
+          const pathEntityId = extractCaseFileEntityId(normalizedRelativePath)
+
+          if (entityId && String(entityId) !== String(pathEntityId)) {
+            console.error("CASE FILE REQUEST REJECTED: ENTITY ID MISMATCH", {
+              entityId,
+              pathEntityId,
+              relativePath: normalizedRelativePath,
+            })
+
+            return
+          }
+        }
         /* --------------------------------------------------
          * Start native download
          * -------------------------------------------------- */
@@ -2060,6 +2692,7 @@ export default function SyncScreen() {
           entityType,
           entityId,
           syncFileId,
+          caseFileSync,
         }).catch(async error => {
           console.error("PC -> ANDROID DOWNLOAD ERROR:", error)
 
@@ -3661,6 +4294,35 @@ export default function SyncScreen() {
   }, [syncDatabaseFiles])
 
   /* ============================================================
+   * START CASE FILES SYNC AFTER CONNECT
+   *
+   * IMPORTANT:
+   * Completely independent from sync_files.
+   * ============================================================ */
+
+  // useEffect(() => {
+  //   if (!connectedDevice) {
+  //     return
+  //   }
+
+  //   if (!isTrusted) {
+  //     return
+  //   }
+
+  //   const timer = setTimeout(() => {
+  //     startCaseFilesSync()
+  //   }, 1500)
+
+  //   return () => {
+  //     clearTimeout(timer)
+  //   }
+  // }, [
+  //   connectedDevice,
+  //   isTrusted,
+  //   startCaseFilesSync,
+  // ])
+
+  /* ============================================================
    * START FILE AUTO SYNC AFTER CONNECT
    * ============================================================ */
 
@@ -3740,6 +4402,12 @@ export default function SyncScreen() {
     incomingDownloadsRef.current.clear()
 
     databaseSyncRequestRef.current = null
+
+    caseFilesSyncGenerationRef.current += 1
+
+    caseFilesSyncRequestRef.current = null
+
+    caseFilesSyncRunningRef.current = false
 
     databaseSyncRunningRef.current = false
 
@@ -4336,6 +5004,14 @@ export default function SyncScreen() {
                 <MaterialIcons name="link-off" size={20} color="#fff" />
 
                 <Text style={styles.forgetButtonText}>قطع الإتصال</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.disconnectButton, styles.flexButton]}
+                onPress={() => startCaseFilesSync()}
+              >
+                <MaterialIcons name="link-off" size={20} color="#fff" />
+
+                <Text style={styles.forgetButtonText}>مزامنة اللفات</Text>
               </Pressable>
             </View>
           ) : (

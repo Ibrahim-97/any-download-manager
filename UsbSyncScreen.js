@@ -26,9 +26,26 @@ import { useSQLiteContext } from "expo-sqlite"
 
 import { drizzle } from "drizzle-orm/expo-sqlite"
 
-import { eq } from "drizzle-orm"
+import {
+  and,
+  eq,
+  inArray,
+  isNotNull,
+} from "drizzle-orm"
 
 import * as schema from "../db/schema"
+// ============================================================
+// DATABASE CLEANUP TABLES
+// ============================================================
+
+const DATABASE_CLEANUP_TABLES = [
+  { name: "clients", table: schema.clients },
+  { name: "cases", table: schema.cases },
+  { name: "caseSessions", table: schema.caseSessions },
+  { name: "tasks", table: schema.tasks },
+  { name: "expenses", table: schema.expenses },
+  { name: "notes", table: schema.notes },
+]
 
 import {
   createDatabaseSyncPayload,
@@ -224,6 +241,17 @@ export default function UsbSyncScreen() {
 
   const [databaseSyncSuccess, setDatabaseSyncSuccess] = useState(false)
   const [caseFilesSyncSuccess, setCaseFilesSyncSuccess] = useState(false)
+  const [databaseCleanupRunning, setDatabaseCleanupRunning] =
+  useState(false)
+
+const [databaseCleanupSuccess, setDatabaseCleanupSuccess] =
+  useState(false)
+
+const [databaseCleanupDeleted, setDatabaseCleanupDeleted] =
+  useState({})
+  const databaseCleanupRunningRef = useRef(false)
+
+const databaseCleanupRequestRef = useRef(null)
 
   // ==========================================================
   // FILES
@@ -993,6 +1021,659 @@ export default function UsbSyncScreen() {
       }
     },
     [db],
+  )
+
+  // ==========================================================
+// DATABASE CLEANUP
+// Android وWindows يحذفان فقط السجلات المحذوفة Soft Delete
+// الموجودة على الجهازين معًا.
+// ==========================================================
+
+const getSoftDeletedDatabaseRows = useCallback(async () => {
+  const result = {}
+
+  for (const item of DATABASE_CLEANUP_TABLES) {
+    const rows = await db
+      .select({
+        id: item.table.id,
+        deletedAt: item.table.deleted_at,
+      })
+      .from(item.table)
+      .where(isNotNull(item.table.deleted_at))
+
+    result[item.name] = rows.map(row => ({
+      id: String(row.id),
+      deletedAt: row.deletedAt || null,
+    }))
+  }
+
+  return result
+}, [db])
+
+const buildCommonCleanupRows = useCallback(
+  (localRows, remoteRows) => {
+    const result = {}
+
+    for (const item of DATABASE_CLEANUP_TABLES) {
+      const localList = Array.isArray(localRows?.[item.name])
+        ? localRows[item.name]
+        : []
+
+      const remoteList = Array.isArray(remoteRows?.[item.name])
+        ? remoteRows[item.name]
+        : []
+
+      const remoteIds = new Set(
+        remoteList.map(row => String(row?.id))
+      )
+
+      const common = localList.filter(row =>
+        remoteIds.has(String(row?.id))
+      )
+
+      result[item.name] = common.map(row => ({
+        id: String(row.id),
+        deletedAt: row.deletedAt || null,
+      }))
+    }
+
+    return result
+  },
+  [],
+)
+
+const permanentlyDeleteLocalRows = useCallback(
+  async approvedRows => {
+    const deleted = {}
+
+    const deleteOrder = [
+      "caseSessions",
+      "tasks",
+      "expenses",
+      "notes",
+      "cases",
+      "clients",
+    ]
+
+    await db.transaction(async tx => {
+      for (const tableName of deleteOrder) {
+        const item = DATABASE_CLEANUP_TABLES.find(
+          entry => entry.name === tableName
+        )
+
+        if (!item) {
+          continue
+        }
+
+        const rows = Array.isArray(
+          approvedRows?.[tableName]
+        )
+          ? approvedRows[tableName]
+          : []
+
+        const ids = rows
+          .map(row => String(row?.id || ""))
+          .filter(Boolean)
+
+        if (ids.length === 0) {
+          deleted[tableName] = 0
+          continue
+        }
+
+        const result = await tx
+          .delete(item.table)
+          .where(
+            and(
+              inArray(item.table.id, ids),
+              isNotNull(item.table.deleted_at),
+            ),
+          )
+
+        deleted[tableName] = Number(
+          result?.changes || 0
+        )
+      }
+    })
+
+    return deleted
+  },
+  [db],
+)
+
+const startDatabaseCleanup = useCallback(async () => {
+  if (!connectedRef.current || !usbConnected) {
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      "الكمبيوتر غير متصل عبر USB."
+    )
+    return
+  }
+
+  if (!trustedRef.current || !trusted) {
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      "يجب الاتصال بجهاز الكمبيوتر الموثوق أولًا."
+    )
+    return
+  }
+
+  if (databaseSyncRunningRef.current) {
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      "انتظر انتهاء مزامنة قاعدة البيانات أولًا."
+    )
+    return
+  }
+
+  if (databaseCleanupRunningRef.current) {
+    return
+  }
+
+  const peerId =
+    pcDeviceRef.current?.id || null
+
+  if (!peerId) {
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      "معرف الكمبيوتر غير متاح."
+    )
+    return
+  }
+
+  Alert.alert(
+    "تنظيف قاعدة البيانات",
+    "سيتم حذف السجلات المحذوفة نهائيًا من الهاتف والكمبيوتر معًا. لا يمكن التراجع عن هذه العملية.",
+    [
+      {
+        text: "إلغاء",
+        style: "cancel",
+      },
+      {
+        text: "تنظيف نهائي",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            databaseCleanupRunningRef.current = true
+
+            setDatabaseCleanupRunning(true)
+
+            setDatabaseCleanupSuccess(false)
+
+            setDatabaseCleanupDeleted({})
+
+            setUsbError("")
+
+            const requestId = createRequestId()
+
+            const localRows =
+              await getSoftDeletedDatabaseRows()
+
+            const total = Object.values(
+              localRows
+            ).reduce(
+              (sum, rows) =>
+                sum +
+                (Array.isArray(rows)
+                  ? rows.length
+                  : 0),
+              0,
+            )
+
+            console.log(
+              "========================================"
+            )
+
+            console.log(
+              "USB DATABASE CLEANUP START"
+            )
+
+            console.log({
+              requestId,
+              peerId,
+              localSoftDeletedCount:
+                total,
+              localRows,
+            })
+
+            console.log(
+              "========================================"
+            )
+
+            databaseCleanupRequestRef.current = {
+              requestId,
+              peerId,
+              localRows,
+              startedAt: Date.now(),
+            }
+
+            const success = send({
+              type:
+                "DATABASE_CLEANUP_REQUEST",
+
+              version: 1,
+
+              requestId,
+
+              timestamp: Date.now(),
+
+              payload: {
+                requestId,
+
+                deviceId: peerId,
+
+                localRows,
+
+                transport: "usb",
+              },
+            })
+
+            if (!success) {
+              throw new Error(
+                "DATABASE_CLEANUP_REQUEST_SEND_FAILED"
+              )
+            }
+          } catch (error) {
+            console.error(
+              "USB DATABASE CLEANUP START ERROR:",
+              error,
+            )
+
+            databaseCleanupRunningRef.current =
+              false
+
+            databaseCleanupRequestRef.current =
+              null
+
+            setDatabaseCleanupRunning(false)
+
+            setUsbError(
+              error?.message ||
+                "فشل بدء تنظيف قاعدة البيانات."
+            )
+          }
+        },
+      },
+    ],
+  )
+}, [
+  getSoftDeletedDatabaseRows,
+  send,
+  trusted,
+  usbConnected,
+])
+
+const handleDatabaseCleanupPlan = useCallback(
+  async message => {
+    try {
+      const payload =
+        message?.payload || {}
+
+      const requestId =
+        message?.requestId ||
+        payload?.requestId ||
+        null
+
+      const remoteRows =
+        payload?.remoteRows || {}
+
+      const cleanupRequest =
+        databaseCleanupRequestRef.current
+
+      if (!cleanupRequest) {
+        console.warn(
+          "USB DATABASE CLEANUP PLAN RECEIVED WITHOUT ACTIVE REQUEST"
+        )
+        return
+      }
+
+      if (
+        cleanupRequest.requestId &&
+        requestId &&
+        cleanupRequest.requestId !==
+          requestId
+      ) {
+        console.warn(
+          "USB DATABASE CLEANUP PLAN REQUEST ID MISMATCH",
+          {
+            localRequestId:
+              cleanupRequest.requestId,
+            remoteRequestId: requestId,
+          }
+        )
+        return
+      }
+
+      const commonRows =
+        buildCommonCleanupRows(
+          cleanupRequest.localRows || {},
+          remoteRows,
+        )
+
+      const commonCount =
+        Object.values(commonRows).reduce(
+          (sum, rows) =>
+            sum +
+            (Array.isArray(rows)
+              ? rows.length
+              : 0),
+          0,
+        )
+
+      console.log(
+        "========================================"
+      )
+
+      console.log(
+        "USB DATABASE CLEANUP PLAN RECEIVED"
+      )
+
+      console.log({
+        requestId,
+        commonCount,
+        commonRows,
+      })
+
+      console.log(
+        "========================================"
+      )
+
+      databaseCleanupRequestRef.current = {
+        ...cleanupRequest,
+        requestId,
+        remoteRows,
+        commonRows,
+        commonCount,
+      }
+
+      // مهم: نرسل COMMIT حتى لو commonCount = 0
+      const success = send({
+        type:
+          "DATABASE_CLEANUP_COMMIT",
+
+        version: 1,
+
+        requestId,
+
+        timestamp: Date.now(),
+
+        payload: {
+          requestId,
+
+          approvedRows: commonRows,
+
+          commonCount,
+
+          transport: "usb",
+        },
+      })
+
+      if (!success) {
+        throw new Error(
+          "DATABASE_CLEANUP_COMMIT_SEND_FAILED"
+        )
+      }
+
+      console.log(
+        "USB DATABASE CLEANUP COMMIT SENT"
+      )
+    } catch (error) {
+      console.error(
+        "USB DATABASE CLEANUP PLAN ERROR:",
+        error,
+      )
+
+      databaseCleanupRunningRef.current =
+        false
+
+      databaseCleanupRequestRef.current =
+        null
+
+      setDatabaseCleanupRunning(false)
+
+      setUsbError(
+        error?.message ||
+          "فشل معالجة خطة تنظيف قاعدة البيانات."
+      )
+    }
+  },
+  [buildCommonCleanupRows, send],
+)
+
+const handleDatabaseCleanupRemoteDone =
+  useCallback(
+    async message => {
+      try {
+        const payload =
+          message?.payload || {}
+
+        const requestId =
+          message?.requestId ||
+          payload?.requestId ||
+          null
+
+        const approvedRows =
+          payload?.approvedRows || {}
+
+        const cleanupRequest =
+          databaseCleanupRequestRef.current
+
+        if (!cleanupRequest) {
+          throw new Error(
+            "DATABASE_CLEANUP_REQUEST_NOT_FOUND"
+          )
+        }
+
+        if (
+          cleanupRequest.requestId &&
+          requestId &&
+          cleanupRequest.requestId !==
+            requestId
+        ) {
+          throw new Error(
+            "DATABASE_CLEANUP_REQUEST_ID_MISMATCH"
+          )
+        }
+
+        if (
+          payload?.success !== true
+        ) {
+          throw new Error(
+            payload?.error ||
+              payload?.message ||
+              "DATABASE_CLEANUP_REMOTE_FAILED"
+          )
+        }
+
+        const deleted =
+          await permanentlyDeleteLocalRows(
+            approvedRows,
+          )
+
+        setDatabaseCleanupDeleted(
+          deleted
+        )
+
+        console.log(
+          "USB DATABASE CLEANUP REMOTE DONE:",
+          {
+            requestId,
+            approvedRows,
+            deleted,
+            success: true,
+          },
+        )
+
+        const success = send({
+          type:
+            "DATABASE_CLEANUP_COMPLETE",
+
+          version: 1,
+
+          requestId,
+
+          timestamp: Date.now(),
+
+          payload: {
+            requestId,
+
+            deleted,
+
+            success: true,
+
+            transport: "usb",
+          },
+        })
+
+        if (!success) {
+          throw new Error(
+            "DATABASE_CLEANUP_COMPLETE_SEND_FAILED"
+          )
+        }
+
+        console.log(
+          "USB DATABASE CLEANUP COMPLETE SENT",
+          {
+            requestId,
+            deleted,
+          },
+        )
+      } catch (error) {
+        console.error(
+          "USB DATABASE CLEANUP REMOTE DONE ERROR:",
+          error,
+        )
+
+        databaseCleanupRunningRef.current =
+          false
+
+        databaseCleanupRequestRef.current =
+          null
+
+        setDatabaseCleanupRunning(false)
+
+        setUsbError(
+          error?.message ||
+            "فشل إكمال تنظيف قاعدة البيانات."
+        )
+      }
+    },
+    [
+      permanentlyDeleteLocalRows,
+      send,
+    ],
+  )
+
+const handleDatabaseCleanupFinished =
+  useCallback(
+    async message => {
+      try {
+        const payload =
+          message?.payload || {}
+
+        const requestId =
+          message?.requestId ||
+          payload?.requestId ||
+          null
+
+        const cleanupRequest =
+          databaseCleanupRequestRef.current
+
+        if (
+          cleanupRequest?.requestId &&
+          requestId &&
+          cleanupRequest.requestId !==
+            requestId
+        ) {
+          console.warn(
+            "USB DATABASE CLEANUP FINISHED REQUEST ID MISMATCH",
+            {
+              localRequestId:
+                cleanupRequest.requestId,
+              remoteRequestId:
+                requestId,
+            },
+          )
+          return
+        }
+
+        if (
+          payload?.success !== true
+        ) {
+          throw new Error(
+            payload?.error ||
+              payload?.message ||
+              "DATABASE_CLEANUP_FAILED"
+          )
+        }
+
+        const deleted =
+          payload?.deleted ||
+          databaseCleanupDeleted ||
+          {}
+
+        databaseCleanupRunningRef.current =
+          false
+
+        databaseCleanupRequestRef.current =
+          null
+
+        setDatabaseCleanupRunning(false)
+
+        setDatabaseCleanupDeleted(
+          deleted
+        )
+
+        setDatabaseCleanupSuccess(
+          true
+        )
+
+        setUsbError("")
+
+        console.log(
+          "========================================"
+        )
+
+        console.log(
+          "USB DATABASE CLEANUP FINISHED SUCCESSFULLY"
+        )
+
+        console.log({
+          requestId,
+          deleted,
+        })
+
+        console.log(
+          "========================================"
+        )
+
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setDatabaseCleanupSuccess(
+              false
+            )
+          }
+        }, 5000)
+      } catch (error) {
+        console.error(
+          "USB DATABASE CLEANUP FINISHED ERROR:",
+          error,
+        )
+
+        databaseCleanupRunningRef.current =
+          false
+
+        databaseCleanupRequestRef.current =
+          null
+
+        setDatabaseCleanupRunning(false)
+
+        setUsbError(
+          error?.message ||
+            "فشل إنهاء تنظيف قاعدة البيانات."
+        )
+      }
+    },
+    [databaseCleanupDeleted],
   )
 
   // ==========================================================
@@ -2595,6 +3276,81 @@ export default function UsbSyncScreen() {
       }
 
       // ======================================================
+// DATABASE_CLEANUP_PLAN
+// ======================================================
+
+if (
+  type === "DATABASE_CLEANUP_PLAN"
+) {
+  await handleDatabaseCleanupPlan(
+    message
+  )
+
+  return
+}
+
+// ======================================================
+// DATABASE_CLEANUP_REMOTE_DONE
+// ======================================================
+
+if (
+  type ===
+  "DATABASE_CLEANUP_REMOTE_DONE"
+) {
+  await handleDatabaseCleanupRemoteDone(
+    message
+  )
+
+  return
+}
+
+// ======================================================
+// DATABASE_CLEANUP_FINISHED
+// ======================================================
+
+if (
+  type ===
+  "DATABASE_CLEANUP_FINISHED"
+) {
+  await handleDatabaseCleanupFinished(
+    message
+  )
+
+  return
+}
+
+// ======================================================
+// DATABASE_CLEANUP_ERROR
+// ======================================================
+
+if (
+  type ===
+  "DATABASE_CLEANUP_ERROR"
+) {
+  console.error(
+    "USB DATABASE CLEANUP ERROR:",
+    payload
+  )
+
+  databaseCleanupRunningRef.current =
+    false
+
+  databaseCleanupRequestRef.current =
+    null
+
+  setDatabaseCleanupRunning(false)
+
+  setUsbError(
+    payload?.message ||
+      payload?.error ||
+      payload?.code ||
+      "DATABASE_CLEANUP_ERROR"
+  )
+
+  return
+}
+
+      // ======================================================
       // TEST RESPONSE
       // ======================================================
 
@@ -3136,6 +3892,9 @@ export default function UsbSyncScreen() {
       startDatabaseSync,
       updateTransfer,
       handleCaseFilesUploadRequests,
+      handleDatabaseCleanupFinished,
+handleDatabaseCleanupPlan,
+handleDatabaseCleanupRemoteDone,
     ],
   )
 
@@ -3175,6 +3934,13 @@ export default function UsbSyncScreen() {
 
       connectedRef.current = false
       connectingRef.current = false
+      databaseCleanupRunningRef.current =
+  false
+
+databaseCleanupRequestRef.current =
+  null
+
+setDatabaseCleanupRunning(false)
 
       setUsbConnected(false)
 
@@ -3856,6 +4622,11 @@ export default function UsbSyncScreen() {
       databaseSyncRunningRef.current = false
 
       databaseSyncRequestRef.current = null
+      databaseCleanupRunningRef.current =
+  false
+
+databaseCleanupRequestRef.current =
+  null
     }
   }, [])
 
@@ -4557,7 +5328,71 @@ export default function UsbSyncScreen() {
             </Text>
           </View>
         ) : null}
+        {usbConnected && trusted ? (
+  <View style={styles.card}>
+    <View style={styles.cardHeader}>
+      <Text style={styles.cardTitle}>
+        تنظيف قاعدة البيانات
+      </Text>
 
+      <MaterialIcons
+        name="delete-sweep"
+        size={23}
+        color="#f87171"
+      />
+    </View>
+
+    <Text style={styles.description}>
+      حذف نهائي للسجلات المحذوفة من قاعدة البيانات على الهاتف والكمبيوتر معًا. يتم حذف السجل فقط إذا كان محذوفًا على الجهازين.
+    </Text>
+
+    <Pressable
+      style={styles.cleanupButton}
+      onPress={startDatabaseCleanup}
+      disabled={
+        databaseCleanupRunning ||
+        databaseSyncing
+      }
+    >
+      {databaseCleanupRunning ? (
+        <ActivityIndicator
+          size="small"
+          color="#fff"
+        />
+      ) : (
+        <MaterialIcons
+          name="delete-sweep"
+          size={22}
+          color="#fff"
+        />
+      )}
+
+      <Text
+        style={
+          styles.primaryButtonText
+        }
+      >
+        {databaseCleanupRunning
+          ? "جاري تنظيف قاعدة البيانات..."
+          : "تنظيف نهائي"}
+      </Text>
+    </Pressable>
+  </View>
+) : null}
+
+{databaseCleanupSuccess ? (
+  <View style={styles.successBox}>
+    <MaterialIcons
+      name="check-circle"
+      size={24}
+      color="#34d399"
+    />
+
+    <Text style={styles.successText}>
+      تم تنظيف قاعدة البيانات على الجهازين بنجاح
+    </Text>
+  </View>
+) : null}
         {/* ================================================== */}
         {/* FILES */}
         {/* ================================================== */}
@@ -5157,4 +5992,15 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     color: "#94a3b8",
   },
+  cleanupButton: {
+  minHeight: 48,
+  borderRadius: 12,
+  backgroundColor: "#7f1d1d",
+  borderWidth: 1,
+  borderColor: "#991b1b",
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 8,
+},
 })

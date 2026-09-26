@@ -1305,17 +1305,13 @@ const startDatabaseCleanup = useCallback(async () => {
 const handleDatabaseCleanupPlan = useCallback(
   async message => {
     try {
-      const payload =
-        message?.payload || {}
-
+      const payload = message?.payload || {}
       const requestId =
         message?.requestId ||
         payload?.requestId ||
         null
 
-      const remoteRows =
-        payload?.remoteRows || {}
-
+      const remoteRows = payload?.remoteRows || {}
       const cleanupRequest =
         databaseCleanupRequestRef.current
 
@@ -1329,15 +1325,15 @@ const handleDatabaseCleanupPlan = useCallback(
       if (
         cleanupRequest.requestId &&
         requestId &&
-        cleanupRequest.requestId !==
-          requestId
+        cleanupRequest.requestId !== requestId
       ) {
         console.warn(
           "USB DATABASE CLEANUP PLAN REQUEST ID MISMATCH",
           {
             localRequestId:
               cleanupRequest.requestId,
-            remoteRequestId: requestId,
+            remoteRequestId:
+              requestId,
           }
         )
         return
@@ -1359,23 +1355,16 @@ const handleDatabaseCleanupPlan = useCallback(
           0,
         )
 
-      console.log(
-        "========================================"
-      )
-
+      console.log("========================================")
       console.log(
         "USB DATABASE CLEANUP PLAN RECEIVED"
       )
-
       console.log({
         requestId,
         commonCount,
         commonRows,
       })
-
-      console.log(
-        "========================================"
-      )
+      console.log("========================================")
 
       databaseCleanupRequestRef.current = {
         ...cleanupRequest,
@@ -1385,24 +1374,16 @@ const handleDatabaseCleanupPlan = useCallback(
         commonCount,
       }
 
-      // مهم: نرسل COMMIT حتى لو commonCount = 0
+      // *مهم: نرسل COMMIT حتى لو commonCount = 0*
       const success = send({
-        type:
-          "DATABASE_CLEANUP_COMMIT",
-
+        type: "DATABASE_CLEANUP_COMMIT",
         version: 1,
-
         requestId,
-
         timestamp: Date.now(),
-
         payload: {
           requestId,
-
           approvedRows: commonRows,
-
           commonCount,
-
           transport: "usb",
         },
       })
@@ -1416,17 +1397,58 @@ const handleDatabaseCleanupPlan = useCallback(
       console.log(
         "USB DATABASE CLEANUP COMMIT SENT"
       )
+
+      // =====================================================
+      // لا يوجد أي سجل مشترك للحذف
+      // =====================================================
+      if (commonCount === 0) {
+        /*
+         * نوقف الـ Loading في الواجهة فورًا
+         * لأن لا يوجد شيء يحتاج إلى حذف.
+         *
+         * لكننا لا نلغي requestRef هنا،
+         * لأن Windows سيرسل DATABASE_CLEANUP_REMOTE_DONE
+         * بعد استلام COMMIT.
+         */
+
+        setDatabaseCleanupRunning(false)
+
+        setDatabaseCleanupDeleted({})
+
+        setDatabaseCleanupSuccess(true)
+
+        setUsbError("")
+
+        console.log("========================================")
+        console.log(
+          "USB DATABASE CLEANUP FINISHED - NO COMMON ROWS"
+        )
+        console.log({
+          commonCount,
+          requestId,
+        })
+        console.log("========================================")
+
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setDatabaseCleanupSuccess(false)
+          }
+        }, 5000)
+
+        return
+      }
+
+      console.log(
+        "USB DATABASE CLEANUP WAITING FOR REMOTE DONE"
+      )
     } catch (error) {
       console.error(
         "USB DATABASE CLEANUP PLAN ERROR:",
         error,
       )
 
-      databaseCleanupRunningRef.current =
-        false
-
-      databaseCleanupRequestRef.current =
-        null
+      databaseCleanupRunningRef.current = false
+      databaseCleanupRequestRef.current = null
 
       setDatabaseCleanupRunning(false)
 
@@ -1438,7 +1460,6 @@ const handleDatabaseCleanupPlan = useCallback(
   },
   [buildCommonCleanupRows, send],
 )
-
 const handleDatabaseCleanupRemoteDone =
   useCallback(
     async message => {
@@ -1451,75 +1472,120 @@ const handleDatabaseCleanupRemoteDone =
           payload?.requestId ||
           null
 
-        const approvedRows =
-          payload?.approvedRows || {}
-
         const cleanupRequest =
           databaseCleanupRequestRef.current
 
         if (!cleanupRequest) {
-          throw new Error(
-            "DATABASE_CLEANUP_REQUEST_NOT_FOUND"
+          /*
+           * قد يكون الرد وصل بعد انتهاء الحالة المحلية.
+           * لا نعتبره خطأ قاتلًا.
+           */
+          console.warn(
+            "USB DATABASE CLEANUP REMOTE DONE RECEIVED WITHOUT ACTIVE REQUEST",
+            {
+              requestId,
+            }
           )
+
+          return
         }
 
         if (
           cleanupRequest.requestId &&
           requestId &&
-          cleanupRequest.requestId !==
-            requestId
+          cleanupRequest.requestId !== requestId
         ) {
-          throw new Error(
-            "DATABASE_CLEANUP_REQUEST_ID_MISMATCH"
+          console.warn(
+            "USB DATABASE CLEANUP REMOTE DONE REQUEST ID MISMATCH",
+            {
+              localRequestId:
+                cleanupRequest.requestId,
+              remoteRequestId:
+                requestId,
+            }
           )
+
+          return
         }
 
+        // =====================================================
+        // لا توجد سجلات مشتركة
+        // =====================================================
         if (
-          payload?.success !== true
+          Number(
+            cleanupRequest.commonCount || 0
+          ) === 0
         ) {
-          throw new Error(
-            payload?.error ||
-              payload?.message ||
-              "DATABASE_CLEANUP_REMOTE_FAILED"
+          console.log("========================================")
+          console.log(
+            "USB DATABASE CLEANUP REMOTE DONE - NO COMMON ROWS"
           )
+          console.log({
+            requestId,
+            commonCount:
+              cleanupRequest.commonCount,
+          })
+          console.log("========================================")
+
+          /*
+           * الآن فقط نغلق الطلب الداخلي،
+           * لأن Windows أكد انتهاء COMMIT.
+           */
+          databaseCleanupRunningRef.current =
+            false
+
+          databaseCleanupRequestRef.current =
+            null
+
+          return
         }
+
+        // =====================================================
+        // يوجد حذف فعلي
+        // =====================================================
+
+        const approvedRows =
+          payload?.approvedRows ||
+          cleanupRequest.commonRows ||
+          {}
 
         const deleted =
           await permanentlyDeleteLocalRows(
-            approvedRows,
+            approvedRows
           )
 
         setDatabaseCleanupDeleted(
           deleted
         )
 
+        // تم انتهاء الحذف الفعلي على الهاتف
+        setDatabaseCleanupRunning(false)
+
+        databaseCleanupRequestRef.current = {
+          ...cleanupRequest,
+          localDeleted: true,
+          deleted,
+        }
+
+        console.log("========================================")
         console.log(
-          "USB DATABASE CLEANUP REMOTE DONE:",
-          {
-            requestId,
-            approvedRows,
-            deleted,
-            success: true,
-          },
+          "USB DATABASE CLEANUP REMOTE DONE"
         )
+        console.log({
+          requestId,
+          deleted,
+          approvedRows,
+        })
+        console.log("========================================")
 
         const success = send({
-          type:
-            "DATABASE_CLEANUP_COMPLETE",
-
+          type: "DATABASE_CLEANUP_COMPLETE",
           version: 1,
-
           requestId,
-
           timestamp: Date.now(),
-
           payload: {
             requestId,
-
             deleted,
-
-            success: true,
-
             transport: "usb",
           },
         })
@@ -1531,16 +1597,12 @@ const handleDatabaseCleanupRemoteDone =
         }
 
         console.log(
-          "USB DATABASE CLEANUP COMPLETE SENT",
-          {
-            requestId,
-            deleted,
-          },
+          "USB DATABASE CLEANUP COMPLETE SENT"
         )
       } catch (error) {
         console.error(
           "USB DATABASE CLEANUP REMOTE DONE ERROR:",
-          error,
+          error
         )
 
         databaseCleanupRunningRef.current =
@@ -1553,16 +1615,12 @@ const handleDatabaseCleanupRemoteDone =
 
         setUsbError(
           error?.message ||
-            "فشل إكمال تنظيف قاعدة البيانات."
+            "فشل إتمام تنظيف قاعدة البيانات."
         )
       }
     },
-    [
-      permanentlyDeleteLocalRows,
-      send,
-    ],
+    [permanentlyDeleteLocalRows, send],
   )
-
 const handleDatabaseCleanupFinished =
   useCallback(
     async message => {
@@ -4350,136 +4408,401 @@ setDatabaseCleanupRunning(false)
   // ==========================================================
 
   useEffect(() => {
-    mountedRef.current = true
+  mountedRef.current = true
 
-    let messageSubscription = null
+  let active = true
 
-    let stateSubscription = null
+  let messageSubscription = null
 
-    let errorSubscription = null
+  let stateSubscription = null
 
-    let fileProgressSubscription = null
+  let errorSubscription = null
 
-    let fileCompletedSubscription = null
+  let fileProgressSubscription = null
 
-    let fileErrorSubscription = null
+  let fileCompletedSubscription = null
 
-    const initialize = async () => {
-      try {
-        const id = await loadDeviceId()
+  let fileErrorSubscription = null
 
-        const trustedPc = await loadTrustedUsb()
+  let connectTimer = null
 
-        if (trustedPc) {
-          const device = createUsbPcDevice({
-            ...trustedPc,
+  const cleanupSubscriptions = () => {
+    try {
+      messageSubscription?.remove?.()
+    } catch (_) {}
 
-            trusted: true,
-          })
+    try {
+      stateSubscription?.remove?.()
+    } catch (_) {}
 
-          pcDeviceRef.current = device
+    try {
+      errorSubscription?.remove?.()
+    } catch (_) {}
 
-          setPcDevice(device)
+    try {
+      fileProgressSubscription?.remove?.()
+    } catch (_) {}
 
-          trustedRef.current = true
+    try {
+      fileCompletedSubscription?.remove?.()
+    } catch (_) {}
 
-          setTrusted(true)
+    try {
+      fileErrorSubscription?.remove?.()
+    } catch (_) {}
 
-          setPairingState("trusted")
-        }
+    messageSubscription = null
 
-        messageSubscription = AvocatoFlow.addListener(
-          "onMessage",
-          handleMessage,
-        )
+    stateSubscription = null
 
-        stateSubscription = AvocatoFlow.addListener(
-          "onConnectionStateChanged",
-          handleConnectionState,
-        )
+    errorSubscription = null
 
-        errorSubscription = AvocatoFlow.addListener(
-          "onConnectionError",
-          handleConnectionError,
-        )
+    fileProgressSubscription = null
 
-        fileProgressSubscription = AvocatoFlow.addListener(
+    fileCompletedSubscription = null
+
+    fileErrorSubscription = null
+
+    if (connectTimer) {
+      clearTimeout(connectTimer)
+
+      connectTimer = null
+    }
+  }
+
+  const initialize = async () => {
+    try {
+      const id = await loadDeviceId()
+
+      if (!active) {
+        return
+      }
+
+      const trustedPc = await loadTrustedUsb()
+
+      if (!active) {
+        return
+      }
+
+      if (trustedPc) {
+        const device = createUsbPcDevice({
+          ...trustedPc,
+
+          trusted: true,
+        })
+
+        pcDeviceRef.current = device
+
+        setPcDevice(device)
+
+        trustedRef.current = true
+
+        setTrusted(true)
+
+        setPairingState("trusted")
+      }
+
+      if (!active) {
+        return
+      }
+
+      /*
+       * ========================================================
+       * ON MESSAGE
+       * ========================================================
+       */
+
+      messageSubscription = AvocatoFlow.addListener(
+        "onMessage",
+        event => {
+          if (!active) {
+            return
+          }
+
+          handleMessage(event)
+        },
+      )
+
+      /*
+       * ========================================================
+       * CONNECTION STATE
+       * ========================================================
+       */
+
+      if (!active) {
+        return
+      }
+
+      stateSubscription = AvocatoFlow.addListener(
+        "onConnectionStateChanged",
+        event => {
+          if (!active) {
+            return
+          }
+
+          handleConnectionState(event)
+        },
+      )
+
+      /*
+       * ========================================================
+       * CONNECTION ERROR
+       * ========================================================
+       */
+
+      if (!active) {
+        return
+      }
+
+      errorSubscription = AvocatoFlow.addListener(
+        "onConnectionError",
+        event => {
+          if (!active) {
+            return
+          }
+
+          handleConnectionError(event)
+        },
+      )
+
+      /*
+       * ========================================================
+       * FILE PROGRESS
+       * ========================================================
+       */
+
+      if (!active) {
+        return
+      }
+
+      fileProgressSubscription =
+        AvocatoFlow.addListener(
           "onFileProgress",
           event => {
-            const transferId = event?.transferId
+            if (!active) {
+              return
+            }
+
+            const transferId =
+              event?.transferId
 
             if (!transferId) {
               return
             }
 
             const requestId =
-              event?.requestId || findRequestIdByTransferId(transferId)
+              event?.requestId ||
+              findRequestIdByTransferId(
+                transferId,
+              )
 
             if (!requestId) {
               return
             }
 
-            const transferred = Number(
-              event?.transferred ??
+            const transferred =
+              Number(
+                event?.transferred ??
                 event?.receivedBytes ??
                 event?.downloaded ??
                 0,
-            )
+              )
 
-            const total = Number(event?.total ?? event?.fileSize ?? 0)
+            const total =
+              Number(
+                event?.total ??
+                event?.fileSize ??
+                0,
+              )
 
             setTransfers(previous =>
               previous.map(item => {
-                if (item.requestId !== requestId) {
+                if (
+                  item.requestId !==
+                  requestId
+                ) {
                   return item
                 }
 
-                const finalTotal = total || item.total || 0
+                const finalTotal =
+                  total ||
+                  item.total ||
+                  0
 
                 const finalTransferred =
                   finalTotal > 0
-                    ? Math.min(Math.max(transferred, 0), finalTotal)
-                    : Math.max(transferred, 0)
+                    ? Math.min(
+                        Math.max(
+                          transferred,
+                          0,
+                        ),
+                        finalTotal,
+                      )
+                    : Math.max(
+                        transferred,
+                        0,
+                      )
 
                 return {
                   ...item,
 
                   transferId,
 
-                  transferred: finalTransferred,
+                  transferred:
+                    finalTransferred,
 
-                  total: finalTotal,
+                  total:
+                    finalTotal,
 
-                  progress: finalTotal > 0 ? finalTransferred / finalTotal : 0,
+                  progress:
+                    finalTotal > 0
+                      ? finalTransferred /
+                        finalTotal
+                      : 0,
 
                   status:
-                    item.status === "completed" ? "completed" : "transferring",
+                    item.status ===
+                    "completed"
+                      ? "completed"
+                      : "transferring",
                 }
               }),
             )
           },
         )
 
-        fileCompletedSubscription = AvocatoFlow.addListener(
+      /*
+       * ========================================================
+       * FILE COMPLETED
+       * ========================================================
+       */
+
+      if (!active) {
+        return
+      }
+
+      fileCompletedSubscription =
+        AvocatoFlow.addListener(
           "onFileCompleted",
           event => {
-            verifyIncomingFile(event).catch(error => {
-              console.log("USB NATIVE FILE COMPLETED HANDLER ERROR:", error)
+            if (!active) {
+              return
+            }
+
+            const transferId =
+              event?.transferId
+
+            const requestId =
+              event?.requestId ||
+              (
+                transferId
+                  ? findRequestIdByTransferId(
+                      transferId,
+                    )
+                  : null
+              )
+
+            if (!requestId) {
+              console.warn(
+                "USB NATIVE FILE COMPLETED: REQUEST ID NOT FOUND",
+                event,
+              )
+
+              return
+            }
+
+            const pendingFile =
+              pendingFilesRef.current.get(
+                requestId,
+              )
+
+            if (
+              pendingFile?.direction ===
+              "ANDROID_TO_PC"
+            ) {
+              updateTransfer(
+                requestId,
+                {
+                  transferId,
+
+                  transferred:
+                    Number(
+                      pendingFile.size ||
+                      0,
+                    ),
+
+                  total:
+                    Number(
+                      pendingFile.size ||
+                      0,
+                    ),
+
+                  progress: 1,
+
+                  status: "completed",
+                },
+              )
+
+              markTransferCompleted(
+                requestId,
+              ).catch(error => {
+                console.error(
+                  "USB NATIVE UPLOAD COMPLETION ERROR:",
+                  error,
+                )
+              })
+
+              return
+            }
+
+            verifyIncomingFile({
+              ...event,
+              requestId,
+            }).catch(error => {
+              console.error(
+                "USB NATIVE FILE COMPLETED HANDLER ERROR:",
+                error,
+              )
             })
           },
         )
 
-        fileErrorSubscription = AvocatoFlow.addListener(
+      /*
+       * ========================================================
+       * FILE ERROR
+       * ========================================================
+       */
+
+      if (!active) {
+        return
+      }
+
+      fileErrorSubscription =
+        AvocatoFlow.addListener(
           "onFileError",
           event => {
-            const transferId = event?.transferId
+            if (!active) {
+              return
+            }
+
+            const transferId =
+              event?.transferId
 
             const requestId =
               event?.requestId ||
-              (transferId ? findRequestIdByTransferId(transferId) : null)
+              (
+                transferId
+                  ? findRequestIdByTransferId(
+                      transferId,
+                    )
+                  : null
+              )
 
             if (!requestId) {
-              console.log("USB NATIVE FILE ERROR REQUEST ID NOT FOUND:", event)
+              console.error(
+                "USB NATIVE FILE ERROR REQUEST ID NOT FOUND:",
+                event,
+              )
 
               return
             }
@@ -4489,73 +4812,94 @@ setDatabaseCleanupRunning(false)
 
               transferId,
 
-              error: event?.error || "فشل نقل الملف.",
+              error:
+                event?.error ||
+                "فشل نقل الملف.",
             }).catch(error => {
-              console.log("USB NATIVE FILE ERROR HANDLER ERROR:", error)
+              console.error(
+                "USB NATIVE FILE ERROR HANDLER ERROR:",
+                error,
+              )
             })
           },
         )
 
-        console.log("USB SCREEN INITIALIZED:", {
+      /*
+       * ========================================================
+       * INITIALIZED
+       * ========================================================
+       */
+
+      console.log(
+        "USB SCREEN INITIALIZED:",
+        {
           deviceId: id,
 
-          trusted: Boolean(trustedPc),
-        })
+          trusted:
+            Boolean(trustedPc),
+        },
+      )
 
-        setTimeout(() => {
-          if (mountedRef.current) {
-            connectUsb()
-          }
-        }, 300)
-      } catch (error) {
-        console.log("USB SCREEN INITIALIZE ERROR:", error)
+      /*
+       * لا نستخدم setTimeout قبل التأكد
+       * أن الـ effect ما زال فعالًا.
+       */
 
-        setUsbStatus("error")
-
-        setUsbError(error?.message || "حدث خطأ أثناء تشغيل USB.")
+      if (!active) {
+        return
       }
+
+      connectTimer = setTimeout(() => {
+        connectTimer = null
+
+        if (
+          active &&
+          mountedRef.current
+        ) {
+          connectUsb()
+        }
+      }, 300)
+    } catch (error) {
+      if (!active) {
+        return
+      }
+
+      console.error(
+        "USB SCREEN INITIALIZE ERROR:",
+        error,
+      )
+
+      setUsbStatus("error")
+
+      setUsbError(
+        error?.message ||
+        "حدث خطأ أثناء تشغيل USB.",
+      )
     }
+  }
 
-    initialize()
+  initialize()
 
-    return () => {
-      mountedRef.current = false
+  return () => {
+    active = false
 
-      try {
-        messageSubscription?.remove?.()
-      } catch (_) {}
+    mountedRef.current = false
 
-      try {
-        stateSubscription?.remove?.()
-      } catch (_) {}
-
-      try {
-        errorSubscription?.remove?.()
-      } catch (_) {}
-
-      try {
-        fileProgressSubscription?.remove?.()
-      } catch (_) {}
-
-      try {
-        fileCompletedSubscription?.remove?.()
-      } catch (_) {}
-
-      try {
-        fileErrorSubscription?.remove?.()
-      } catch (_) {}
-    }
-  }, [
-    connectUsb,
-    findRequestIdByTransferId,
-    handleConnectionError,
-    handleConnectionState,
-    handleIncomingFileError,
-    handleMessage,
-    loadDeviceId,
-    loadTrustedUsb,
-    verifyIncomingFile,
-  ])
+    cleanupSubscriptions()
+  }
+}, [
+  connectUsb,
+  findRequestIdByTransferId,
+  handleConnectionError,
+  handleConnectionState,
+  handleIncomingFileError,
+  handleMessage,
+  loadDeviceId,
+  loadTrustedUsb,
+  markTransferCompleted,
+  updateTransfer,
+  verifyIncomingFile,
+])
 
   // ==========================================================
   // START DATABASE SYNC AFTER CONNECT
@@ -5257,6 +5601,42 @@ databaseCleanupRequestRef.current =
               </Pressable>
             </View>
           )}
+           {usbConnected && trusted ? (
+  <View>
+    
+    <Pressable
+      style={styles.cleanupButton}
+      onPress={startDatabaseCleanup}
+      disabled={
+        databaseCleanupRunning ||
+        databaseSyncing
+      }
+    >
+      {databaseCleanupRunning ? (
+        <ActivityIndicator
+          size="small"
+          color="#fff"
+        />
+      ) : (
+        <MaterialIcons
+          name="delete-sweep"
+          size={22}
+          color="#fff"
+        />
+      )}
+
+      <Text
+        style={
+          styles.primaryButtonText
+        }
+      >
+        {databaseCleanupRunning
+          ? "جاري تنظيف قاعدة البيانات..."
+          : "تنظيف نهائي"}
+      </Text>
+    </Pressable>
+  </View>
+) : null}
         </View>
 
         {/* ================================================== */}
@@ -5328,57 +5708,7 @@ databaseCleanupRequestRef.current =
             </Text>
           </View>
         ) : null}
-        {usbConnected && trusted ? (
-  <View style={styles.card}>
-    <View style={styles.cardHeader}>
-      <Text style={styles.cardTitle}>
-        تنظيف قاعدة البيانات
-      </Text>
-
-      <MaterialIcons
-        name="delete-sweep"
-        size={23}
-        color="#f87171"
-      />
-    </View>
-
-    <Text style={styles.description}>
-      حذف نهائي للسجلات المحذوفة من قاعدة البيانات على الهاتف والكمبيوتر معًا. يتم حذف السجل فقط إذا كان محذوفًا على الجهازين.
-    </Text>
-
-    <Pressable
-      style={styles.cleanupButton}
-      onPress={startDatabaseCleanup}
-      disabled={
-        databaseCleanupRunning ||
-        databaseSyncing
-      }
-    >
-      {databaseCleanupRunning ? (
-        <ActivityIndicator
-          size="small"
-          color="#fff"
-        />
-      ) : (
-        <MaterialIcons
-          name="delete-sweep"
-          size={22}
-          color="#fff"
-        />
-      )}
-
-      <Text
-        style={
-          styles.primaryButtonText
-        }
-      >
-        {databaseCleanupRunning
-          ? "جاري تنظيف قاعدة البيانات..."
-          : "تنظيف نهائي"}
-      </Text>
-    </Pressable>
-  </View>
-) : null}
+       
 
 {databaseCleanupSuccess ? (
   <View style={styles.successBox}>

@@ -30,7 +30,11 @@ import { File } from "expo-file-system"
 import { MaterialIcons } from "@react-native-vector-icons/material-icons"
 
 import { useSQLiteContext } from "expo-sqlite"
-import { eq } from "drizzle-orm"
+import {
+  eq,
+  isNotNull,
+  inArray,
+} from "drizzle-orm"
 
 import AvocatoFlow from "../modules/avocato-flow/src"
 
@@ -46,6 +50,33 @@ const DISCOVERY_TIMEOUT = 30 * 1000
 const DISCOVERY_RETRY_DELAY = 2000
 
 const RECEIVED_FILES_DIRECTORY = "Avocato/Received"
+
+const DATABASE_CLEANUP_TABLES = [
+  {
+    name: "clients",
+    table: schema.clients,
+  },
+  {
+    name: "cases",
+    table: schema.cases,
+  },
+  {
+    name: "caseSessions",
+    table: schema.caseSessions,
+  },
+  {
+    name: "tasks",
+    table: schema.tasks,
+  },
+  {
+    name: "expenses",
+    table: schema.expenses,
+  },
+  {
+    name: "notes",
+    table: schema.notes,
+  },
+]
 
 /* ============================================================
  * PATH HELPERS
@@ -206,6 +237,13 @@ export default function SyncScreen() {
   const [databaseSyncing, setDatabaseSyncing] = useState(false)
   const [caseFilesSyncSuccess, setCaseFilesSyncSuccess] = useState(false)
 
+  const cleanupRequestRef = useRef(null)
+
+const cleanupRunningRef = useRef(false)
+
+const [databaseCleanupRunning, setDatabaseCleanupRunning] =
+  useState(false)
+
   /* ============================================================
    * DATABASE SYNC REFS
    * ============================================================ */
@@ -350,6 +388,232 @@ export default function SyncScreen() {
       reconnectTimerRef.current = null
     }
   }, [])
+
+
+  const getSoftDeletedDatabaseRows = useCallback(async () => {
+  const result = {}
+
+  for (const item of DATABASE_CLEANUP_TABLES) {
+    const rows = await db
+      .select({
+        id: item.table.id,
+        deletedAt: item.table.deleted_at,
+      })
+      .from(item.table)
+      .where(isNotNull(item.table.deleted_at))
+
+    result[item.name] = rows.map(row => ({
+      id: String(row.id),
+      deletedAt: row.deletedAt || null,
+    }))
+  }
+
+  return result
+}, [db])
+
+
+const buildCommonCleanupRows = useCallback(
+  (localRows, remoteRows) => {
+    const result = {}
+
+    for (const item of DATABASE_CLEANUP_TABLES) {
+      const localList = Array.isArray(localRows?.[item.name])
+        ? localRows[item.name]
+        : []
+
+      const remoteList = Array.isArray(remoteRows?.[item.name])
+        ? remoteRows[item.name]
+        : []
+
+      const remoteIds = new Set(
+        remoteList.map(row => String(row.id))
+      )
+
+      const common = localList.filter(row =>
+        remoteIds.has(String(row.id))
+      )
+
+      result[item.name] = common.map(row => ({
+        id: String(row.id),
+        deletedAt: row.deletedAt || null,
+      }))
+    }
+
+    return result
+  },
+  [],
+)
+
+const permanentlyDeleteLocalRows = useCallback(
+  async approvedRows => {
+    const deleted = {}
+
+    const deleteOrder = [
+      "caseSessions",
+      "tasks",
+      "expenses",
+      "notes",
+      "cases",
+      "clients",
+    ]
+
+    await db.transaction(async tx => {
+      for (const tableName of deleteOrder) {
+        const item = DATABASE_CLEANUP_TABLES.find(
+          entry => entry.name === tableName
+        )
+
+        if (!item) {
+          continue
+        }
+
+        const rows = Array.isArray(
+          approvedRows?.[tableName]
+        )
+          ? approvedRows[tableName]
+          : []
+
+        const ids = rows
+          .map(row => String(row?.id || ""))
+          .filter(Boolean)
+
+        if (ids.length === 0) {
+          deleted[tableName] = 0
+          continue
+        }
+
+        await tx
+          .delete(item.table)
+          .where(
+            inArray(item.table.id, ids)
+          )
+
+        deleted[tableName] = ids.length
+      }
+    })
+
+    return deleted
+  },
+  [db],
+)
+
+const startDatabaseCleanup = useCallback(async () => {
+  if (!isTrusted) {
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      "يجب الاتصال بجهاز الكمبيوتر الموثوق أولًا."
+    )
+
+    return
+  }
+
+  if (databaseSyncRunningRef.current) {
+    Alert.alert(
+      "المزامنة",
+      "انتظر انتهاء مزامنة قاعدة البيانات أولًا."
+    )
+
+    return
+  }
+
+  if (cleanupRunningRef.current) {
+    return
+  }
+
+  const peerId =
+    connectedDeviceRef.current?.id || null
+
+  if (!peerId) {
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      "الكمبيوتر غير متصل."
+    )
+
+    return
+  }
+
+  try {
+    cleanupRunningRef.current = true
+
+    setDatabaseCleanupRunning(true)
+
+    const requestId = Crypto.randomUUID()
+
+    const localRows =
+      await getSoftDeletedDatabaseRows()
+
+    const total = Object.values(localRows)
+      .reduce(
+        (sum, rows) =>
+          sum +
+          (Array.isArray(rows)
+            ? rows.length
+            : 0),
+        0,
+      )
+
+    console.log(
+      "========================================"
+    )
+
+    console.log(
+      "DATABASE CLEANUP START"
+    )
+
+    console.log({
+      requestId,
+      peerId,
+      localSoftDeletedCount: total,
+      localRows,
+    })
+
+    console.log(
+      "========================================"
+    )
+
+    cleanupRequestRef.current = {
+      requestId,
+      peerId,
+      localRows,
+      startedAt: Date.now(),
+    }
+
+    AvocatoFlow.sendMessage(
+      JSON.stringify({
+        type: "DATABASE_CLEANUP_REQUEST",
+        version: 1,
+        requestId,
+        timestamp: Date.now(),
+
+        payload: {
+          requestId,
+          deviceId: peerId,
+          localRows,
+        },
+      }),
+    )
+  } catch (error) {
+    console.error(
+      "DATABASE CLEANUP START ERROR:",
+      error
+    )
+
+    cleanupRequestRef.current = null
+
+    cleanupRunningRef.current = false
+
+    setDatabaseCleanupRunning(false)
+
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      error?.message ||
+        "تعذر بدء عملية تنظيف قاعدة البيانات."
+    )
+  }
+}, [
+  isTrusted,
+  getSoftDeletedDatabaseRows,
+])
 
   /* ============================================================
    * FILE TRANSFER HELPERS
@@ -1230,6 +1494,110 @@ const handleCaseFilesUploadRequests = useCallback(
   },
   [isTrusted],
 )
+
+/**
+ * ============================================================
+ * DATABASE CLEANUP COMPLETE
+ * ============================================================
+ *
+ * Android يؤكد هنا أنه حذف نفس السجلات
+ * التي حذفها Windows.
+ */
+
+function handleDatabaseCleanupComplete(ws, message) {
+  if (!ws?.trusted) {
+    sendMessage(
+      ws,
+      "DATABASE_CLEANUP_ERROR",
+      {
+        success: false,
+
+        code: "DEVICE_NOT_TRUSTED",
+
+        message: "Device must be paired first",
+      },
+      message.requestId,
+    )
+
+    return
+  }
+
+  try {
+    const payload = message?.payload || {}
+
+    const requestId =
+      message?.requestId ||
+      payload?.requestId ||
+      null
+
+    const deleted =
+      payload?.deleted || {}
+
+    console.log(
+      "========================================",
+    )
+
+    console.log(
+      "DATABASE CLEANUP COMPLETE RECEIVED",
+    )
+
+    console.log({
+      requestId,
+
+      deviceId: ws.device?.id,
+
+      deleted,
+    })
+
+    console.log(
+      "========================================",
+    )
+
+    sendMessage(
+      ws,
+      "DATABASE_CLEANUP_FINISHED",
+      {
+        success: true,
+
+        requestId,
+
+        deviceId: ws.device?.id || null,
+
+        deleted,
+      },
+      requestId,
+    )
+
+    console.log(
+      "DATABASE CLEANUP FINISHED SUCCESSFULLY",
+      {
+        requestId,
+
+        deviceId: ws.device?.id,
+      },
+    )
+  } catch (error) {
+    console.error(
+      "DATABASE CLEANUP COMPLETE ERROR:",
+      error,
+    )
+
+    sendMessage(
+      ws,
+      "DATABASE_CLEANUP_ERROR",
+      {
+        success: false,
+
+        code: "DATABASE_CLEANUP_COMPLETE_FAILED",
+
+        error:
+          error?.message ||
+          String(error),
+      },
+      message?.requestId || null,
+    )
+  }
+}
 
   /* ============================================================
    * CASE FILES SYNC REQUEST
@@ -2513,6 +2881,214 @@ const handleCaseFilesUploadRequests = useCallback(
 
       const payload = message?.payload || {}
 
+      if (type === "DATABASE_CLEANUP_PLAN") {
+  try {
+    const cleanupRequest =
+      cleanupRequestRef.current
+
+    if (!cleanupRequest) {
+      console.warn(
+        "DATABASE CLEANUP PLAN WITHOUT REQUEST"
+      )
+
+      return
+    }
+
+    const remoteRows =
+      payload?.remoteRows || {}
+
+    const commonRows =
+      buildCommonCleanupRows(
+        cleanupRequest.localRows,
+        remoteRows,
+      )
+
+    const commonCount =
+      Object.values(commonRows).reduce(
+        (sum, rows) =>
+          sum +
+          (Array.isArray(rows)
+            ? rows.length
+            : 0),
+        0,
+      )
+
+    console.log(
+      "========================================"
+    )
+
+    console.log(
+      "DATABASE CLEANUP PLAN RECEIVED"
+    )
+
+    console.log({
+      requestId: message?.requestId,
+      commonCount,
+      commonRows,
+    })
+
+    console.log(
+      "========================================"
+    )
+
+    /*
+     * لا يوجد شيء مشترك للحذف.
+     */
+
+    if (commonCount === 0) {
+      cleanupRequestRef.current = null
+
+      cleanupRunningRef.current = false
+
+      setDatabaseCleanupRunning(false)
+
+      Alert.alert(
+        "تنظيف قاعدة البيانات",
+        "لا توجد سجلات محذوفة نهائيًا مشتركة بين الجهازين."
+      )
+
+      return
+    }
+
+    /*
+     * نحفظ الخطة قبل التنفيذ.
+     */
+
+    cleanupRequestRef.current = {
+      ...cleanupRequest,
+      commonRows,
+    }
+
+    /*
+     * نرسل للكمبيوتر أن هذه هي السجلات
+     * التي يجب حذفها نهائيًا.
+     */
+
+    AvocatoFlow.sendMessage(
+      JSON.stringify({
+        type: "DATABASE_CLEANUP_COMMIT",
+        version: 1,
+
+        requestId:
+          cleanupRequest.requestId,
+
+        timestamp: Date.now(),
+
+        payload: {
+          requestId:
+            cleanupRequest.requestId,
+
+          approvedRows: commonRows,
+        },
+      }),
+    )
+  } catch (error) {
+    console.error(
+      "DATABASE CLEANUP PLAN ERROR:",
+      error
+    )
+
+    cleanupRequestRef.current = null
+
+    cleanupRunningRef.current = false
+
+    setDatabaseCleanupRunning(false)
+  }
+
+  return
+}
+
+if (type === "DATABASE_CLEANUP_REMOTE_DONE") {
+  try {
+    const cleanupRequest =
+      cleanupRequestRef.current
+
+    if (!cleanupRequest) {
+      return
+    }
+
+    const success =
+      payload?.success !== false
+
+    if (!success) {
+      throw new Error(
+        payload?.error ||
+          "DATABASE_CLEANUP_REMOTE_FAILED"
+      )
+    }
+
+    console.log(
+      "DATABASE CLEANUP REMOTE DONE:",
+      payload
+    )
+
+    /*
+     * الآن نحذف نفس السجلات من الهاتف.
+     */
+
+    const deleted =
+      await permanentlyDeleteLocalRows(
+        cleanupRequest.commonRows
+      )
+
+    console.log(
+      "ANDROID DATABASE CLEANUP DONE:",
+      deleted
+    )
+
+    AvocatoFlow.sendMessage(
+      JSON.stringify({
+        type:
+          "DATABASE_CLEANUP_COMPLETE",
+
+        version: 1,
+
+        requestId:
+          cleanupRequest.requestId,
+
+        timestamp: Date.now(),
+
+        payload: {
+          success: true,
+
+          requestId:
+            cleanupRequest.requestId,
+
+          deleted,
+        },
+      }),
+    )
+
+    cleanupRequestRef.current = null
+
+    cleanupRunningRef.current = false
+
+    setDatabaseCleanupRunning(false)
+
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      "تم حذف السجلات المحذوفة نهائيًا من الجهازين."
+    )
+  } catch (error) {
+    console.error(
+      "DATABASE CLEANUP LOCAL ERROR:",
+      error
+    )
+
+    cleanupRunningRef.current = false
+
+    setDatabaseCleanupRunning(false)
+
+    Alert.alert(
+      "تنظيف قاعدة البيانات",
+      error?.message ||
+        "حدث خطأ أثناء الحذف النهائي."
+    )
+  }
+
+  return
+}
+
       /* ======================================================
        * CASE_FILES_SYNC_COMPLETE
        * ====================================================== */
@@ -3350,13 +3926,19 @@ if (type === "CASE_FILES_UPLOAD_REQUESTS") {
         const requestId = resolveRequestId(message, payload)
 
         const transferred = Number(
-          payload?.transferred ??
-            payload?.receivedBytes ??
-            payload?.bytesTransferred ??
-            0,
-        )
+  payload?.transferred ??
+    payload?.receivedBytes ??
+    payload?.transferredBytes ??
+    payload?.bytesTransferred ??
+    payload?.sentBytes ??
+    0,
+)
 
-        const total = Number(payload?.total ?? payload?.fileSize ?? 0)
+const total = Number(
+  payload?.total ??
+    payload?.fileSize ??
+    0,
+)
 
         if (!requestId) {
           return
@@ -5491,6 +6073,7 @@ if (type === "CASE_FILES_UPLOAD_REQUESTS") {
                   </Text>
                 </Pressable>
               )}
+            
 
               <Pressable
                 style={[styles.disconnectButton, styles.flexButton]}
@@ -5500,14 +6083,7 @@ if (type === "CASE_FILES_UPLOAD_REQUESTS") {
 
                 <Text style={styles.forgetButtonText}>قطع الإتصال</Text>
               </Pressable>
-              <Pressable
-                style={[styles.disconnectButton, styles.flexButton]}
-                onPress={() => startCaseFilesSync()}
-              >
-                <MaterialIcons name="link-off" size={20} color="#fff" />
 
-                <Text style={styles.forgetButtonText}>مزامنة اللفات</Text>
-              </Pressable>
             </View>
           ) : (
             <Pressable
@@ -5525,6 +6101,42 @@ if (type === "CASE_FILES_UPLOAD_REQUESTS") {
               </Text>
             </Pressable>
           )}
+        <View className="mt-4">
+            {isTrusted && (
+                <Pressable
+  style={[
+    styles.primaryButton,
+    databaseCleanupRunning && {
+      opacity: 0.6,
+    },
+  ]}
+  onPress={startDatabaseCleanup}
+  disabled={
+    databaseCleanupRunning ||
+    databaseSyncing
+  }
+>
+  {databaseCleanupRunning ? (
+    <ActivityIndicator
+      size="small"
+      color="#fff"
+    />
+  ) : (
+    <MaterialIcons
+      name="delete-sweep"
+      size={22}
+      color="#fff"
+    />
+  )}
+
+  <Text style={styles.primaryButtonText}>
+    {databaseCleanupRunning
+      ? "جاري تنظيف قاعدة البيانات..."
+      : "تنظيف السجلات المحذوفة"}
+  </Text>
+</Pressable>
+              )}
+        </View>
         </View>
 
         {/* ======================================================

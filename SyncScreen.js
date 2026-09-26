@@ -30,11 +30,7 @@ import { File } from "expo-file-system"
 import { MaterialIcons } from "@react-native-vector-icons/material-icons"
 
 import { useSQLiteContext } from "expo-sqlite"
-import {
-  eq,
-  isNotNull,
-  inArray,
-} from "drizzle-orm"
+import { eq, isNotNull, inArray } from "drizzle-orm"
 
 import AvocatoFlow from "../modules/avocato-flow/src"
 
@@ -239,10 +235,9 @@ export default function SyncScreen() {
 
   const cleanupRequestRef = useRef(null)
 
-const cleanupRunningRef = useRef(false)
+  const cleanupRunningRef = useRef(false)
 
-const [databaseCleanupRunning, setDatabaseCleanupRunning] =
-  useState(false)
+  const [databaseCleanupRunning, setDatabaseCleanupRunning] = useState(false)
 
   /* ============================================================
    * DATABASE SYNC REFS
@@ -389,31 +384,28 @@ const [databaseCleanupRunning, setDatabaseCleanupRunning] =
     }
   }, [])
 
-
   const getSoftDeletedDatabaseRows = useCallback(async () => {
-  const result = {}
+    const result = {}
 
-  for (const item of DATABASE_CLEANUP_TABLES) {
-    const rows = await db
-      .select({
-        id: item.table.id,
-        deletedAt: item.table.deleted_at,
-      })
-      .from(item.table)
-      .where(isNotNull(item.table.deleted_at))
+    for (const item of DATABASE_CLEANUP_TABLES) {
+      const rows = await db
+        .select({
+          id: item.table.id,
+          deletedAt: item.table.deleted_at,
+        })
+        .from(item.table)
+        .where(isNotNull(item.table.deleted_at))
 
-    result[item.name] = rows.map(row => ({
-      id: String(row.id),
-      deletedAt: row.deletedAt || null,
-    }))
-  }
+      result[item.name] = rows.map(row => ({
+        id: String(row.id),
+        deletedAt: row.deletedAt || null,
+      }))
+    }
 
-  return result
-}, [db])
+    return result
+  }, [db])
 
-
-const buildCommonCleanupRows = useCallback(
-  (localRows, remoteRows) => {
+  const buildCommonCleanupRows = useCallback((localRows, remoteRows) => {
     const result = {}
 
     for (const item of DATABASE_CLEANUP_TABLES) {
@@ -425,13 +417,9 @@ const buildCommonCleanupRows = useCallback(
         ? remoteRows[item.name]
         : []
 
-      const remoteIds = new Set(
-        remoteList.map(row => String(row.id))
-      )
+      const remoteIds = new Set(remoteList.map(row => String(row.id)))
 
-      const common = localList.filter(row =>
-        remoteIds.has(String(row.id))
-      )
+      const common = localList.filter(row => remoteIds.has(String(row.id)))
 
       result[item.name] = common.map(row => ({
         id: String(row.id),
@@ -440,180 +428,144 @@ const buildCommonCleanupRows = useCallback(
     }
 
     return result
-  },
-  [],
-)
+  }, [])
 
-const permanentlyDeleteLocalRows = useCallback(
-  async approvedRows => {
-    const deleted = {}
+  const permanentlyDeleteLocalRows = useCallback(
+    async approvedRows => {
+      const deleted = {}
 
-    const deleteOrder = [
-      "caseSessions",
-      "tasks",
-      "expenses",
-      "notes",
-      "cases",
-      "clients",
-    ]
+      const deleteOrder = [
+        "caseSessions",
+        "tasks",
+        "expenses",
+        "notes",
+        "cases",
+        "clients",
+      ]
 
-    await db.transaction(async tx => {
-      for (const tableName of deleteOrder) {
-        const item = DATABASE_CLEANUP_TABLES.find(
-          entry => entry.name === tableName
-        )
-
-        if (!item) {
-          continue
-        }
-
-        const rows = Array.isArray(
-          approvedRows?.[tableName]
-        )
-          ? approvedRows[tableName]
-          : []
-
-        const ids = rows
-          .map(row => String(row?.id || ""))
-          .filter(Boolean)
-
-        if (ids.length === 0) {
-          deleted[tableName] = 0
-          continue
-        }
-
-        await tx
-          .delete(item.table)
-          .where(
-            inArray(item.table.id, ids)
+      await db.transaction(async tx => {
+        for (const tableName of deleteOrder) {
+          const item = DATABASE_CLEANUP_TABLES.find(
+            entry => entry.name === tableName,
           )
 
-        deleted[tableName] = ids.length
-      }
-    })
+          if (!item) {
+            continue
+          }
 
-    return deleted
-  },
-  [db],
-)
+          const rows = Array.isArray(approvedRows?.[tableName])
+            ? approvedRows[tableName]
+            : []
 
-const startDatabaseCleanup = useCallback(async () => {
-  if (!isTrusted) {
-    Alert.alert(
-      "تنظيف قاعدة البيانات",
-      "يجب الاتصال بجهاز الكمبيوتر الموثوق أولًا."
-    )
+          const ids = rows.map(row => String(row?.id || "")).filter(Boolean)
 
-    return
-  }
+          if (ids.length === 0) {
+            deleted[tableName] = 0
+            continue
+          }
 
-  if (databaseSyncRunningRef.current) {
-    Alert.alert(
-      "المزامنة",
-      "انتظر انتهاء مزامنة قاعدة البيانات أولًا."
-    )
+          await tx.delete(item.table).where(inArray(item.table.id, ids))
 
-    return
-  }
+          deleted[tableName] = ids.length
+        }
+      })
 
-  if (cleanupRunningRef.current) {
-    return
-  }
+      return deleted
+    },
+    [db],
+  )
 
-  const peerId =
-    connectedDeviceRef.current?.id || null
+  const startDatabaseCleanup = useCallback(async () => {
+    if (!isTrusted) {
+      Alert.alert(
+        "تنظيف قاعدة البيانات",
+        "يجب الاتصال بجهاز الكمبيوتر الموثوق أولًا.",
+      )
 
-  if (!peerId) {
-    Alert.alert(
-      "تنظيف قاعدة البيانات",
-      "الكمبيوتر غير متصل."
-    )
+      return
+    }
 
-    return
-  }
+    if (databaseSyncRunningRef.current) {
+      Alert.alert("المزامنة", "انتظر انتهاء مزامنة قاعدة البيانات أولًا.")
 
-  try {
-    cleanupRunningRef.current = true
+      return
+    }
 
-    setDatabaseCleanupRunning(true)
+    if (cleanupRunningRef.current) {
+      return
+    }
 
-    const requestId = Crypto.randomUUID()
+    const peerId = connectedDeviceRef.current?.id || null
 
-    const localRows =
-      await getSoftDeletedDatabaseRows()
+    if (!peerId) {
+      Alert.alert("تنظيف قاعدة البيانات", "الكمبيوتر غير متصل.")
 
-    const total = Object.values(localRows)
-      .reduce(
-        (sum, rows) =>
-          sum +
-          (Array.isArray(rows)
-            ? rows.length
-            : 0),
+      return
+    }
+
+    try {
+      cleanupRunningRef.current = true
+
+      setDatabaseCleanupRunning(true)
+
+      const requestId = Crypto.randomUUID()
+
+      const localRows = await getSoftDeletedDatabaseRows()
+
+      const total = Object.values(localRows).reduce(
+        (sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0),
         0,
       )
 
-    console.log(
-      "========================================"
-    )
+      console.log("========================================")
 
-    console.log(
-      "DATABASE CLEANUP START"
-    )
+      console.log("DATABASE CLEANUP START")
 
-    console.log({
-      requestId,
-      peerId,
-      localSoftDeletedCount: total,
-      localRows,
-    })
-
-    console.log(
-      "========================================"
-    )
-
-    cleanupRequestRef.current = {
-      requestId,
-      peerId,
-      localRows,
-      startedAt: Date.now(),
-    }
-
-    AvocatoFlow.sendMessage(
-      JSON.stringify({
-        type: "DATABASE_CLEANUP_REQUEST",
-        version: 1,
+      console.log({
         requestId,
-        timestamp: Date.now(),
+        peerId,
+        localSoftDeletedCount: total,
+        localRows,
+      })
 
-        payload: {
+      console.log("========================================")
+
+      cleanupRequestRef.current = {
+        requestId,
+        peerId,
+        localRows,
+        startedAt: Date.now(),
+      }
+
+      AvocatoFlow.sendMessage(
+        JSON.stringify({
+          type: "DATABASE_CLEANUP_REQUEST",
+          version: 1,
           requestId,
-          deviceId: peerId,
-          localRows,
-        },
-      }),
-    )
-  } catch (error) {
-    console.error(
-      "DATABASE CLEANUP START ERROR:",
-      error
-    )
+          timestamp: Date.now(),
 
-    cleanupRequestRef.current = null
+          payload: {
+            requestId,
+            deviceId: peerId,
+            localRows,
+          },
+        }),
+      )
+    } catch (error) {
+      console.error("DATABASE CLEANUP START ERROR:", error)
 
-    cleanupRunningRef.current = false
+      cleanupRequestRef.current = null
 
-    setDatabaseCleanupRunning(false)
+      cleanupRunningRef.current = false
 
-    Alert.alert(
-      "تنظيف قاعدة البيانات",
-      error?.message ||
-        "تعذر بدء عملية تنظيف قاعدة البيانات."
-    )
-  }
-}, [
-  isTrusted,
-  getSoftDeletedDatabaseRows,
-])
+      setDatabaseCleanupRunning(false)
+
+      Alert.alert(
+        "تنظيف قاعدة البيانات",
+        error?.message || "تعذر بدء عملية تنظيف قاعدة البيانات.",
+      )
+    }
+  }, [isTrusted, getSoftDeletedDatabaseRows])
 
   /* ============================================================
    * FILE TRANSFER HELPERS
@@ -1116,488 +1068,377 @@ const startDatabaseCleanup = useCallback(async () => {
   }, [])
 
   /* ============================================================
- * CASE FILES SYNC
- *
- * ANDROID -> PC
- *
- * Prepare Android files requested by PC
- * ============================================================ */
+   * CASE FILES SYNC
+   *
+   * ANDROID -> PC
+   *
+   * Prepare Android files requested by PC
+   * ============================================================ */
 
-const handleCaseFilesUploadRequests = useCallback(
-  async requests => {
-    if (!Array.isArray(requests) || requests.length === 0) {
-      console.log(
-        "CASE FILES UPLOAD REQUESTS: NO REQUESTS",
-      )
+  const handleCaseFilesUploadRequests = useCallback(
+    async requests => {
+      if (!Array.isArray(requests) || requests.length === 0) {
+        console.log("CASE FILES UPLOAD REQUESTS: NO REQUESTS")
 
-      return
-    }
+        return
+      }
 
-    if (!isTrusted) {
-      console.error(
-        "CASE FILES UPLOAD REQUESTS REJECTED: DEVICE_NOT_TRUSTED",
-      )
+      if (!isTrusted) {
+        console.error("CASE FILES UPLOAD REQUESTS REJECTED: DEVICE_NOT_TRUSTED")
 
-      return
-    }
+        return
+      }
 
-    const baseDirectory =
-      FileSystem.documentDirectory
+      const baseDirectory = FileSystem.documentDirectory
 
-    if (!baseDirectory) {
-      console.error(
-        "CASE FILES UPLOAD REQUESTS ERROR: ANDROID_DOCUMENT_DIRECTORY_NOT_AVAILABLE",
-      )
-
-      return
-    }
-
-    const rootDirectory =
-      `${baseDirectory}documents/`
-
-    for (const request of requests) {
-      try {
-        const relativePath =
-          request?.relativePath || null
-
-        const entityId =
-          request?.entityId || null
-
-        const fileName =
-          request?.fileName ||
-          "file"
-
-        const fileSize =
-          Number(request?.fileSize || 0)
-
-        const mimeType =
-          request?.mimeType ||
-          "application/octet-stream"
-
-        /* ----------------------------------------------------
-         * Validate relativePath
-         * ---------------------------------------------------- */
-
-        const normalizedRelativePath =
-          normalizeCaseFileRelativePath(
-            relativePath,
-          )
-
-        if (
-          !normalizedRelativePath ||
-          !isSafeCaseFileRelativePath(
-            normalizedRelativePath,
-          )
-        ) {
-          console.error(
-            "CASE FILE UPLOAD REQUEST REJECTED: INVALID RELATIVE PATH",
-            {
-              relativePath,
-              request,
-            },
-          )
-
-          continue
-        }
-
-        const pathEntityId =
-          extractCaseFileEntityId(
-            normalizedRelativePath,
-          )
-
-        const pathFileName =
-          extractCaseFileName(
-            normalizedRelativePath,
-          )
-
-        if (!pathEntityId || !pathFileName) {
-          console.error(
-            "CASE FILE UPLOAD REQUEST REJECTED: INVALID PATH PARTS",
-            {
-              relativePath:
-                normalizedRelativePath,
-            },
-          )
-
-          continue
-        }
-
-        if (
-          entityId &&
-          String(entityId) !==
-            String(pathEntityId)
-        ) {
-          console.error(
-            "CASE FILE UPLOAD REQUEST REJECTED: ENTITY ID MISMATCH",
-            {
-              entityId,
-              pathEntityId,
-              relativePath:
-                normalizedRelativePath,
-            },
-          )
-
-          continue
-        }
-
-        /* ----------------------------------------------------
-         * Canonical Android path:
-         *
-         * documents/
-         *   <entityId>/
-         *     <fileName>
-         * ---------------------------------------------------- */
-
-        const safeEntityId =
-          sanitizePathPart(
-            pathEntityId,
-            "folder",
-          )
-
-        const safeFileName =
-          sanitizePathPart(
-            pathFileName,
-            "file",
-          )
-
-        const fileUri =
-          `${rootDirectory}${safeEntityId}/${safeFileName}`
-
-        const info =
-          await FileSystem.getInfoAsync(
-            fileUri,
-          )
-
-        if (
-          !info.exists ||
-          info.isDirectory === true
-        ) {
-          console.error(
-            "CASE FILE UPLOAD REQUEST REJECTED: FILE NOT FOUND",
-            {
-              relativePath:
-                normalizedRelativePath,
-              fileUri,
-            },
-          )
-
-          continue
-        }
-
-        const actualFileSize =
-          Number(info.size || 0)
-
-        /* ----------------------------------------------------
-         * One requestId per upload
-         * ---------------------------------------------------- */
-
-        const requestId =
-          Crypto.randomUUID()
-
-        /* ----------------------------------------------------
-         * Store pending upload
-         *
-         * IMPORTANT:
-         * direction = ANDROID_TO_PC
-         * caseFileSync = true
-         * ---------------------------------------------------- */
-
-        const pendingFile = {
-          requestId,
-
-          transferId: null,
-
-          uri: fileUri,
-
-          name: safeFileName,
-
-          fileName: safeFileName,
-
-          size:
-            Number.isFinite(fileSize) &&
-            fileSize > 0
-              ? fileSize
-              : actualFileSize,
-
-          mimeType,
-
-          relativePath:
-            normalizedRelativePath,
-
-          entityType:
-            request?.entityType ||
-            "case",
-
-          entityId:
-            pathEntityId,
-
-          syncFileId: null,
-
-          caseFileSync: true,
-
-          direction:
-            "ANDROID_TO_PC",
-
-          databaseFile: false,
-
-          receivedFile: false,
-
-        }
-
-        pendingFilesRef.current.set(
-          requestId,
-          pendingFile,
+      if (!baseDirectory) {
+        console.error(
+          "CASE FILES UPLOAD REQUESTS ERROR: ANDROID_DOCUMENT_DIRECTORY_NOT_AVAILABLE",
         )
 
-        /* ----------------------------------------------------
-         * UI
-         * ---------------------------------------------------- */
+        return
+      }
 
-        setTransfers(prev => [
-          ...prev,
-          {
-            id: requestId,
+      const rootDirectory = `${baseDirectory}documents/`
 
+      for (const request of requests) {
+        try {
+          const relativePath = request?.relativePath || null
+
+          const entityId = request?.entityId || null
+
+          const fileName = request?.fileName || "file"
+
+          const fileSize = Number(request?.fileSize || 0)
+
+          const mimeType = request?.mimeType || "application/octet-stream"
+
+          /* ----------------------------------------------------
+           * Validate relativePath
+           * ---------------------------------------------------- */
+
+          const normalizedRelativePath =
+            normalizeCaseFileRelativePath(relativePath)
+
+          if (
+            !normalizedRelativePath ||
+            !isSafeCaseFileRelativePath(normalizedRelativePath)
+          ) {
+            console.error(
+              "CASE FILE UPLOAD REQUEST REJECTED: INVALID RELATIVE PATH",
+              {
+                relativePath,
+                request,
+              },
+            )
+
+            continue
+          }
+
+          const pathEntityId = extractCaseFileEntityId(normalizedRelativePath)
+
+          const pathFileName = extractCaseFileName(normalizedRelativePath)
+
+          if (!pathEntityId || !pathFileName) {
+            console.error(
+              "CASE FILE UPLOAD REQUEST REJECTED: INVALID PATH PARTS",
+              {
+                relativePath: normalizedRelativePath,
+              },
+            )
+
+            continue
+          }
+
+          if (entityId && String(entityId) !== String(pathEntityId)) {
+            console.error(
+              "CASE FILE UPLOAD REQUEST REJECTED: ENTITY ID MISMATCH",
+              {
+                entityId,
+                pathEntityId,
+                relativePath: normalizedRelativePath,
+              },
+            )
+
+            continue
+          }
+
+          /* ----------------------------------------------------
+           * Canonical Android path:
+           *
+           * documents/
+           *   <entityId>/
+           *     <fileName>
+           * ---------------------------------------------------- */
+
+          const safeEntityId = sanitizePathPart(pathEntityId, "folder")
+
+          const safeFileName = sanitizePathPart(pathFileName, "file")
+
+          const fileUri = `${rootDirectory}${safeEntityId}/${safeFileName}`
+
+          const info = await FileSystem.getInfoAsync(fileUri)
+
+          if (!info.exists || info.isDirectory === true) {
+            console.error("CASE FILE UPLOAD REQUEST REJECTED: FILE NOT FOUND", {
+              relativePath: normalizedRelativePath,
+              fileUri,
+            })
+
+            continue
+          }
+
+          const actualFileSize = Number(info.size || 0)
+
+          /* ----------------------------------------------------
+           * One requestId per upload
+           * ---------------------------------------------------- */
+
+          const requestId = Crypto.randomUUID()
+
+          /* ----------------------------------------------------
+           * Store pending upload
+           *
+           * IMPORTANT:
+           * direction = ANDROID_TO_PC
+           * caseFileSync = true
+           * ---------------------------------------------------- */
+
+          const pendingFile = {
             requestId,
 
             transferId: null,
 
-            fileName: safeFileName,
-
-            total: pendingFile.size,
-
-            transferred: 0,
-
-            progress: 0,
-
-            status: "waiting",
-
-            direction:
-              "ANDROID_TO_PC",
-
-            relativePath:
-              normalizedRelativePath,
-
-            entityType:
-              pendingFile.entityType,
-
-            entityId:
-              pathEntityId,
-
-            syncFileId: null,
-
             uri: fileUri,
 
-          },
-        ])
+            name: safeFileName,
 
-        console.log(
-          "========================================",
-        )
+            fileName: safeFileName,
 
-        console.log(
-          "CASE FILE UPLOAD REQUEST PREPARED:",
-          {
-            requestId,
-
-            fileName:
-              safeFileName,
-
-            fileSize:
-              pendingFile.size,
+            size:
+              Number.isFinite(fileSize) && fileSize > 0
+                ? fileSize
+                : actualFileSize,
 
             mimeType,
 
-            relativePath:
-              normalizedRelativePath,
+            relativePath: normalizedRelativePath,
 
-            entityId:
-              pathEntityId,
+            entityType: request?.entityType || "case",
 
-            fileUri,
+            entityId: pathEntityId,
 
-          },
-        )
+            syncFileId: null,
 
-        console.log(
-          "========================================",
-        )
+            caseFileSync: true,
 
-        /* ----------------------------------------------------
-         * Tell Windows:
-         *
-         * Android wants to upload this file
-         * ---------------------------------------------------- */
+            direction: "ANDROID_TO_PC",
 
-        AvocatoFlow.sendMessage(
-          JSON.stringify({
-            type: "FILE_REQUEST",
+            databaseFile: false,
 
-            version: 1,
+            receivedFile: false,
+          }
 
-            requestId,
+          pendingFilesRef.current.set(requestId, pendingFile)
 
-            timestamp: Date.now(),
+          /* ----------------------------------------------------
+           * UI
+           * ---------------------------------------------------- */
 
-            payload: {
+          setTransfers(prev => [
+            ...prev,
+            {
+              id: requestId,
+
               requestId,
 
-              fileName:
-                safeFileName,
+              transferId: null,
 
-              fileSize:
-                pendingFile.size,
+              fileName: safeFileName,
 
-              mimeType,
+              total: pendingFile.size,
 
-              relativePath:
-                normalizedRelativePath,
+              transferred: 0,
 
-              entityType:
-                pendingFile.entityType,
+              progress: 0,
 
-              entityId:
-                pathEntityId,
+              status: "waiting",
 
-              caseFileSync: true,
+              direction: "ANDROID_TO_PC",
+
+              relativePath: normalizedRelativePath,
+
+              entityType: pendingFile.entityType,
+
+              entityId: pathEntityId,
+
+              syncFileId: null,
+
+              uri: fileUri,
             },
-          }),
-        )
+          ])
 
-        console.log(
-          "CASE FILE FILE_REQUEST SENT TO PC:",
-          {
+          console.log("========================================")
+
+          console.log("CASE FILE UPLOAD REQUEST PREPARED:", {
             requestId,
 
-            fileName:
-              safeFileName,
+            fileName: safeFileName,
 
-            relativePath:
-              normalizedRelativePath,
+            fileSize: pendingFile.size,
 
-            entityId:
-              pathEntityId,
-          },
-        )
-      } catch (error) {
-        console.error(
-          "CASE FILE UPLOAD REQUEST ERROR:",
-          {
+            mimeType,
+
+            relativePath: normalizedRelativePath,
+
+            entityId: pathEntityId,
+
+            fileUri,
+          })
+
+          console.log("========================================")
+
+          /* ----------------------------------------------------
+           * Tell Windows:
+           *
+           * Android wants to upload this file
+           * ---------------------------------------------------- */
+
+          AvocatoFlow.sendMessage(
+            JSON.stringify({
+              type: "FILE_REQUEST",
+
+              version: 1,
+
+              requestId,
+
+              timestamp: Date.now(),
+
+              payload: {
+                requestId,
+
+                fileName: safeFileName,
+
+                fileSize: pendingFile.size,
+
+                mimeType,
+
+                relativePath: normalizedRelativePath,
+
+                entityType: pendingFile.entityType,
+
+                entityId: pathEntityId,
+
+                caseFileSync: true,
+              },
+            }),
+          )
+
+          console.log("CASE FILE FILE_REQUEST SENT TO PC:", {
+            requestId,
+
+            fileName: safeFileName,
+
+            relativePath: normalizedRelativePath,
+
+            entityId: pathEntityId,
+          })
+        } catch (error) {
+          console.error("CASE FILE UPLOAD REQUEST ERROR:", {
             request,
-            error:
-              error?.message ||
-              String(error),
-          },
-        )
+            error: error?.message || String(error),
+          })
+        }
       }
+    },
+    [isTrusted],
+  )
+
+  /**
+   * ============================================================
+   * DATABASE CLEANUP COMPLETE
+   * ============================================================
+   *
+   * Android يؤكد هنا أنه حذف نفس السجلات
+   * التي حذفها Windows.
+   */
+
+  function handleDatabaseCleanupComplete(ws, message) {
+    if (!ws?.trusted) {
+      sendMessage(
+        ws,
+        "DATABASE_CLEANUP_ERROR",
+        {
+          success: false,
+
+          code: "DEVICE_NOT_TRUSTED",
+
+          message: "Device must be paired first",
+        },
+        message.requestId,
+      )
+
+      return
     }
-  },
-  [isTrusted],
-)
 
-/**
- * ============================================================
- * DATABASE CLEANUP COMPLETE
- * ============================================================
- *
- * Android يؤكد هنا أنه حذف نفس السجلات
- * التي حذفها Windows.
- */
+    try {
+      const payload = message?.payload || {}
 
-function handleDatabaseCleanupComplete(ws, message) {
-  if (!ws?.trusted) {
-    sendMessage(
-      ws,
-      "DATABASE_CLEANUP_ERROR",
-      {
-        success: false,
+      const requestId = message?.requestId || payload?.requestId || null
 
-        code: "DEVICE_NOT_TRUSTED",
+      const deleted = payload?.deleted || {}
 
-        message: "Device must be paired first",
-      },
-      message.requestId,
-    )
+      console.log("========================================")
 
-    return
-  }
+      console.log("DATABASE CLEANUP COMPLETE RECEIVED")
 
-  try {
-    const payload = message?.payload || {}
-
-    const requestId =
-      message?.requestId ||
-      payload?.requestId ||
-      null
-
-    const deleted =
-      payload?.deleted || {}
-
-    console.log(
-      "========================================",
-    )
-
-    console.log(
-      "DATABASE CLEANUP COMPLETE RECEIVED",
-    )
-
-    console.log({
-      requestId,
-
-      deviceId: ws.device?.id,
-
-      deleted,
-    })
-
-    console.log(
-      "========================================",
-    )
-
-    sendMessage(
-      ws,
-      "DATABASE_CLEANUP_FINISHED",
-      {
-        success: true,
-
-        requestId,
-
-        deviceId: ws.device?.id || null,
-
-        deleted,
-      },
-      requestId,
-    )
-
-    console.log(
-      "DATABASE CLEANUP FINISHED SUCCESSFULLY",
-      {
+      console.log({
         requestId,
 
         deviceId: ws.device?.id,
-      },
-    )
-  } catch (error) {
-    console.error(
-      "DATABASE CLEANUP COMPLETE ERROR:",
-      error,
-    )
 
-    sendMessage(
-      ws,
-      "DATABASE_CLEANUP_ERROR",
-      {
-        success: false,
+        deleted,
+      })
 
-        code: "DATABASE_CLEANUP_COMPLETE_FAILED",
+      console.log("========================================")
 
-        error:
-          error?.message ||
-          String(error),
-      },
-      message?.requestId || null,
-    )
+      sendMessage(
+        ws,
+        "DATABASE_CLEANUP_FINISHED",
+        {
+          success: true,
+
+          requestId,
+
+          deviceId: ws.device?.id || null,
+
+          deleted,
+        },
+        requestId,
+      )
+
+      console.log("DATABASE CLEANUP FINISHED SUCCESSFULLY", {
+        requestId,
+
+        deviceId: ws.device?.id,
+      })
+    } catch (error) {
+      console.error("DATABASE CLEANUP COMPLETE ERROR:", error)
+
+      sendMessage(
+        ws,
+        "DATABASE_CLEANUP_ERROR",
+        {
+          success: false,
+
+          code: "DATABASE_CLEANUP_COMPLETE_FAILED",
+
+          error: error?.message || String(error),
+        },
+        message?.requestId || null,
+      )
+    }
   }
-}
 
   /* ============================================================
    * CASE FILES SYNC REQUEST
@@ -2882,212 +2723,172 @@ function handleDatabaseCleanupComplete(ws, message) {
       const payload = message?.payload || {}
 
       if (type === "DATABASE_CLEANUP_PLAN") {
-  try {
-    const cleanupRequest =
-      cleanupRequestRef.current
+        try {
+          const cleanupRequest = cleanupRequestRef.current
 
-    if (!cleanupRequest) {
-      console.warn(
-        "DATABASE CLEANUP PLAN WITHOUT REQUEST"
-      )
+          if (!cleanupRequest) {
+            console.warn("DATABASE CLEANUP PLAN WITHOUT REQUEST")
 
-      return
-    }
+            return
+          }
 
-    const remoteRows =
-      payload?.remoteRows || {}
+          const remoteRows = payload?.remoteRows || {}
 
-    const commonRows =
-      buildCommonCleanupRows(
-        cleanupRequest.localRows,
-        remoteRows,
-      )
+          const commonRows = buildCommonCleanupRows(
+            cleanupRequest.localRows,
+            remoteRows,
+          )
 
-    const commonCount =
-      Object.values(commonRows).reduce(
-        (sum, rows) =>
-          sum +
-          (Array.isArray(rows)
-            ? rows.length
-            : 0),
-        0,
-      )
+          const commonCount = Object.values(commonRows).reduce(
+            (sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0),
+            0,
+          )
 
-    console.log(
-      "========================================"
-    )
+          console.log("========================================")
 
-    console.log(
-      "DATABASE CLEANUP PLAN RECEIVED"
-    )
+          console.log("DATABASE CLEANUP PLAN RECEIVED")
 
-    console.log({
-      requestId: message?.requestId,
-      commonCount,
-      commonRows,
-    })
+          console.log({
+            requestId: message?.requestId,
+            commonCount,
+            commonRows,
+          })
 
-    console.log(
-      "========================================"
-    )
+          console.log("========================================")
 
-    /*
-     * لا يوجد شيء مشترك للحذف.
-     */
+          /*
+           * لا يوجد شيء مشترك للحذف.
+           */
 
-    if (commonCount === 0) {
-      cleanupRequestRef.current = null
+          if (commonCount === 0) {
+            cleanupRequestRef.current = null
 
-      cleanupRunningRef.current = false
+            cleanupRunningRef.current = false
 
-      setDatabaseCleanupRunning(false)
+            setDatabaseCleanupRunning(false)
 
-      Alert.alert(
-        "تنظيف قاعدة البيانات",
-        "لا توجد سجلات محذوفة نهائيًا مشتركة بين الجهازين."
-      )
+            Alert.alert(
+              "تنظيف قاعدة البيانات",
+              "لا توجد سجلات محذوفة نهائيًا مشتركة بين الجهازين.",
+            )
 
-      return
-    }
+            return
+          }
 
-    /*
-     * نحفظ الخطة قبل التنفيذ.
-     */
+          /*
+           * نحفظ الخطة قبل التنفيذ.
+           */
 
-    cleanupRequestRef.current = {
-      ...cleanupRequest,
-      commonRows,
-    }
+          cleanupRequestRef.current = {
+            ...cleanupRequest,
+            commonRows,
+          }
 
-    /*
-     * نرسل للكمبيوتر أن هذه هي السجلات
-     * التي يجب حذفها نهائيًا.
-     */
+          /*
+           * نرسل للكمبيوتر أن هذه هي السجلات
+           * التي يجب حذفها نهائيًا.
+           */
 
-    AvocatoFlow.sendMessage(
-      JSON.stringify({
-        type: "DATABASE_CLEANUP_COMMIT",
-        version: 1,
+          AvocatoFlow.sendMessage(
+            JSON.stringify({
+              type: "DATABASE_CLEANUP_COMMIT",
+              version: 1,
 
-        requestId:
-          cleanupRequest.requestId,
+              requestId: cleanupRequest.requestId,
 
-        timestamp: Date.now(),
+              timestamp: Date.now(),
 
-        payload: {
-          requestId:
-            cleanupRequest.requestId,
+              payload: {
+                requestId: cleanupRequest.requestId,
 
-          approvedRows: commonRows,
-        },
-      }),
-    )
-  } catch (error) {
-    console.error(
-      "DATABASE CLEANUP PLAN ERROR:",
-      error
-    )
+                approvedRows: commonRows,
+              },
+            }),
+          )
+        } catch (error) {
+          console.error("DATABASE CLEANUP PLAN ERROR:", error)
 
-    cleanupRequestRef.current = null
+          cleanupRequestRef.current = null
 
-    cleanupRunningRef.current = false
+          cleanupRunningRef.current = false
 
-    setDatabaseCleanupRunning(false)
-  }
+          setDatabaseCleanupRunning(false)
+        }
 
-  return
-}
+        return
+      }
 
-if (type === "DATABASE_CLEANUP_REMOTE_DONE") {
-  try {
-    const cleanupRequest =
-      cleanupRequestRef.current
+      if (type === "DATABASE_CLEANUP_REMOTE_DONE") {
+        try {
+          const cleanupRequest = cleanupRequestRef.current
 
-    if (!cleanupRequest) {
-      return
-    }
+          if (!cleanupRequest) {
+            return
+          }
 
-    const success =
-      payload?.success !== false
+          const success = payload?.success !== false
 
-    if (!success) {
-      throw new Error(
-        payload?.error ||
-          "DATABASE_CLEANUP_REMOTE_FAILED"
-      )
-    }
+          if (!success) {
+            throw new Error(payload?.error || "DATABASE_CLEANUP_REMOTE_FAILED")
+          }
 
-    console.log(
-      "DATABASE CLEANUP REMOTE DONE:",
-      payload
-    )
+          console.log("DATABASE CLEANUP REMOTE DONE:", payload)
 
-    /*
-     * الآن نحذف نفس السجلات من الهاتف.
-     */
+          /*
+           * الآن نحذف نفس السجلات من الهاتف.
+           */
 
-    const deleted =
-      await permanentlyDeleteLocalRows(
-        cleanupRequest.commonRows
-      )
+          const deleted = await permanentlyDeleteLocalRows(
+            cleanupRequest.commonRows,
+          )
 
-    console.log(
-      "ANDROID DATABASE CLEANUP DONE:",
-      deleted
-    )
+          console.log("ANDROID DATABASE CLEANUP DONE:", deleted)
 
-    AvocatoFlow.sendMessage(
-      JSON.stringify({
-        type:
-          "DATABASE_CLEANUP_COMPLETE",
+          AvocatoFlow.sendMessage(
+            JSON.stringify({
+              type: "DATABASE_CLEANUP_COMPLETE",
 
-        version: 1,
+              version: 1,
 
-        requestId:
-          cleanupRequest.requestId,
+              requestId: cleanupRequest.requestId,
 
-        timestamp: Date.now(),
+              timestamp: Date.now(),
 
-        payload: {
-          success: true,
+              payload: {
+                success: true,
 
-          requestId:
-            cleanupRequest.requestId,
+                requestId: cleanupRequest.requestId,
 
-          deleted,
-        },
-      }),
-    )
+                deleted,
+              },
+            }),
+          )
 
-    cleanupRequestRef.current = null
+          cleanupRequestRef.current = null
 
-    cleanupRunningRef.current = false
+          cleanupRunningRef.current = false
 
-    setDatabaseCleanupRunning(false)
+          setDatabaseCleanupRunning(false)
 
-    Alert.alert(
-      "تنظيف قاعدة البيانات",
-      "تم حذف السجلات المحذوفة نهائيًا من الجهازين."
-    )
-  } catch (error) {
-    console.error(
-      "DATABASE CLEANUP LOCAL ERROR:",
-      error
-    )
+          Alert.alert(
+            "تنظيف قاعدة البيانات",
+            "تم حذف السجلات المحذوفة نهائيًا من الجهازين.",
+          )
+        } catch (error) {
+          console.error("DATABASE CLEANUP LOCAL ERROR:", error)
 
-    cleanupRunningRef.current = false
+          cleanupRunningRef.current = false
 
-    setDatabaseCleanupRunning(false)
+          setDatabaseCleanupRunning(false)
 
-    Alert.alert(
-      "تنظيف قاعدة البيانات",
-      error?.message ||
-        "حدث خطأ أثناء الحذف النهائي."
-    )
-  }
+          Alert.alert(
+            "تنظيف قاعدة البيانات",
+            error?.message || "حدث خطأ أثناء الحذف النهائي.",
+          )
+        }
 
-  return
-}
+        return
+      }
 
       /* ======================================================
        * CASE_FILES_SYNC_COMPLETE
@@ -3441,43 +3242,29 @@ if (type === "DATABASE_CLEANUP_REMOTE_DONE") {
       }
 
       /* ======================================================
- * CASE_FILES_UPLOAD_REQUESTS
- *
- * PC -> Android:
- * Windows asks Android to upload files
- * ====================================================== */
+       * CASE_FILES_UPLOAD_REQUESTS
+       *
+       * PC -> Android:
+       * Windows asks Android to upload files
+       * ====================================================== */
 
-if (type === "CASE_FILES_UPLOAD_REQUESTS") {
-  const requests =
-    payload?.requests ||
-    message?.requests ||
-    []
+      if (type === "CASE_FILES_UPLOAD_REQUESTS") {
+        const requests = payload?.requests || message?.requests || []
 
-  console.log(
-    "========================================",
-  )
+        console.log("========================================")
 
-  console.log(
-    "CASE_FILES_UPLOAD_REQUESTS RECEIVED:",
-    {
-      count: Array.isArray(requests)
-        ? requests.length
-        : 0,
+        console.log("CASE_FILES_UPLOAD_REQUESTS RECEIVED:", {
+          count: Array.isArray(requests) ? requests.length : 0,
 
-      requests,
-    },
-  )
+          requests,
+        })
 
-  console.log(
-    "========================================",
-  )
+        console.log("========================================")
 
-  await handleCaseFilesUploadRequests(
-    requests,
-  )
+        await handleCaseFilesUploadRequests(requests)
 
-  return
-}
+        return
+      }
 
       /* ======================================================
        * FILE_SEND_REQUEST
@@ -3926,19 +3713,15 @@ if (type === "CASE_FILES_UPLOAD_REQUESTS") {
         const requestId = resolveRequestId(message, payload)
 
         const transferred = Number(
-  payload?.transferred ??
-    payload?.receivedBytes ??
-    payload?.transferredBytes ??
-    payload?.bytesTransferred ??
-    payload?.sentBytes ??
-    0,
-)
+          payload?.transferred ??
+            payload?.receivedBytes ??
+            payload?.transferredBytes ??
+            payload?.bytesTransferred ??
+            payload?.sentBytes ??
+            0,
+        )
 
-const total = Number(
-  payload?.total ??
-    payload?.fileSize ??
-    0,
-)
+        const total = Number(payload?.total ?? payload?.fileSize ?? 0)
 
         if (!requestId) {
           return
@@ -3988,99 +3771,72 @@ const total = Number(
        * ====================================================== */
 
       if (type === "FILE_COMPLETE") {
-  const transferId =
-    payload?.transferId ||
-    message?.transferId
+        const transferId = payload?.transferId || message?.transferId
 
-  console.log(
-    "FILE_COMPLETE MESSAGE:",
-    JSON.stringify(message, null, 2),
-  )
+        console.log("FILE_COMPLETE MESSAGE:", JSON.stringify(message, null, 2))
 
-  const requestId =
-    resolveRequestId(
-      message,
-      payload,
-    )
+        const requestId = resolveRequestId(message, payload)
 
-  if (!requestId) {
-    console.warn(
-      "FILE_COMPLETE: REQUEST ID NOT FOUND",
-      {
-        transferId,
-        message,
-        pendingFiles:
-          Array.from(
-            pendingFilesRef.current.entries(),
-          ),
-      },
-    )
+        if (!requestId) {
+          console.warn("FILE_COMPLETE: REQUEST ID NOT FOUND", {
+            transferId,
+            message,
+            pendingFiles: Array.from(pendingFilesRef.current.entries()),
+          })
 
-    return
-  }
+          return
+        }
 
-  const pendingFile =
-    pendingFilesRef.current.get(
-      requestId,
-    )
+        const pendingFile = pendingFilesRef.current.get(requestId)
 
-  /*
-   * ========================================================
-   * ANDROID -> PC
-   *
-   * Android already uploaded the file.
-   *
-   * The native upload completion has already called
-   * markTransferCompleted().
-   *
-   * Windows sends FILE_COMPLETE as a final acknowledgement.
-   *
-   * DO NOT call markTransferCompleted() again.
-   * ========================================================
-   */
+        /*
+         * ========================================================
+         * ANDROID -> PC
+         *
+         * Android already uploaded the file.
+         *
+         * The native upload completion has already called
+         * markTransferCompleted().
+         *
+         * Windows sends FILE_COMPLETE as a final acknowledgement.
+         *
+         * DO NOT call markTransferCompleted() again.
+         * ========================================================
+         */
 
-  if (
-    pendingFile?.caseFileSync === true &&
-    pendingFile?.direction ===
-      "ANDROID_TO_PC"
-  ) {
-    console.log(
-      "CASE FILE ANDROID -> PC FILE_COMPLETE ACK RECEIVED:",
-      {
-        requestId,
-        transferId,
-        relativePath:
-          pendingFile.relativePath,
-      },
-    )
+        if (
+          pendingFile?.caseFileSync === true &&
+          pendingFile?.direction === "ANDROID_TO_PC"
+        ) {
+          console.log("CASE FILE ANDROID -> PC FILE_COMPLETE ACK RECEIVED:", {
+            requestId,
+            transferId,
+            relativePath: pendingFile.relativePath,
+          })
 
-    /*
-     * The upload is already completed.
-     * This message is only the PC acknowledgement.
-     *
-     * Remove the pending entry if it still exists.
-     */
-    pendingFilesRef.current.delete(
-      requestId,
-    )
+          /*
+           * The upload is already completed.
+           * This message is only the PC acknowledgement.
+           *
+           * Remove the pending entry if it still exists.
+           */
+          pendingFilesRef.current.delete(requestId)
 
-    return
-  }
+          return
+        }
 
-  /*
-   * ========================================================
-   * PC -> ANDROID
-   *
-   * This is the normal incoming file completion path.
-   * ========================================================
-   */
+        /*
+         * ========================================================
+         * PC -> ANDROID
+         *
+         * This is the normal incoming file completion path.
+         * ========================================================
+         */
 
-  await markTransferCompleted(
-    requestId,
-  )
+        await markTransferCompleted(requestId)
 
-  return
-}
+        return
+      }
 
       /* ======================================================
        * FILE_ERROR
@@ -5392,11 +5148,7 @@ const total = Number(
     return () => {
       clearTimeout(timer)
     }
-  }, [
-    connectedDevice,
-    isTrusted,
-    startCaseFilesSync,
-  ])
+  }, [connectedDevice, isTrusted, startCaseFilesSync])
 
   /* ============================================================
    * START FILE AUTO SYNC AFTER CONNECT
@@ -5416,7 +5168,6 @@ const total = Number(
   //       syncDatabaseFilesRef.current()
   //     }
   //   }, 500)
-    
 
   //   return () => {
   //     clearTimeout(timer)
@@ -6073,7 +5824,6 @@ const total = Number(
                   </Text>
                 </Pressable>
               )}
-            
 
               <Pressable
                 style={[styles.disconnectButton, styles.flexButton]}
@@ -6083,7 +5833,6 @@ const total = Number(
 
                 <Text style={styles.forgetButtonText}>قطع الإتصال</Text>
               </Pressable>
-
             </View>
           ) : (
             <Pressable
@@ -6101,42 +5850,32 @@ const total = Number(
               </Text>
             </Pressable>
           )}
-        <View className="mt-4">
+          <View className="mt-4">
             {isTrusted && (
-                <Pressable
-  style={[
-    styles.primaryButton,
-    databaseCleanupRunning && {
-      opacity: 0.6,
-    },
-  ]}
-  onPress={startDatabaseCleanup}
-  disabled={
-    databaseCleanupRunning ||
-    databaseSyncing
-  }
->
-  {databaseCleanupRunning ? (
-    <ActivityIndicator
-      size="small"
-      color="#fff"
-    />
-  ) : (
-    <MaterialIcons
-      name="delete-sweep"
-      size={22}
-      color="#fff"
-    />
-  )}
+              <Pressable
+                style={[
+                  styles.primaryButton,
+                  databaseCleanupRunning && {
+                    opacity: 0.6,
+                  },
+                ]}
+                onPress={startDatabaseCleanup}
+                disabled={databaseCleanupRunning || databaseSyncing}
+              >
+                {databaseCleanupRunning ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <MaterialIcons name="delete-sweep" size={22} color="#fff" />
+                )}
 
-  <Text style={styles.primaryButtonText}>
-    {databaseCleanupRunning
-      ? "جاري تنظيف قاعدة البيانات..."
-      : "تنظيف السجلات المحذوفة"}
-  </Text>
-</Pressable>
-              )}
-        </View>
+                <Text style={styles.primaryButtonText}>
+                  {databaseCleanupRunning
+                    ? "جاري تنظيف قاعدة البيانات..."
+                    : " تنظيف قاعدة البيانات"}
+                </Text>
+              </Pressable>
+            )}
+          </View>
         </View>
 
         {/* ======================================================
@@ -6225,9 +5964,9 @@ const total = Number(
           </View>
         )}
 
-        
-{caseFilesSyncSuccess ? (
-  <View style={{
+        {caseFilesSyncSuccess ? (
+          <View
+            style={{
               flexDirection: "row",
               alignItems: "center",
               backgroundColor: "#064e3b",
@@ -6236,25 +5975,23 @@ const total = Number(
               borderRadius: 13,
               padding: 13,
               marginBottom: 12,
-            }}>
-    <MaterialIcons
-      name="check-circle"
-      size={24}
-      color="#16a34a"
-    />
+            }}
+          >
+            <MaterialIcons name="check-circle" size={24} color="#16a34a" />
 
-    <Text style={{
+            <Text
+              style={{
                 flex: 1,
                 marginLeft: 8,
                 fontSize: 13,
                 fontWeight: "700",
                 color: "#d1fae5",
-              }}>
-      تمت مزامنة الملفات بنجاح
-    </Text>
-  </View>
-) : null}
-
+              }}
+            >
+              تمت مزامنة الملفات بنجاح
+            </Text>
+          </View>
+        ) : null}
 
         {/* ======================================================
           TRANSFERS

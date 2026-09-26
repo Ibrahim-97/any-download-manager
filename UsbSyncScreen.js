@@ -252,6 +252,7 @@ const [databaseCleanupDeleted, setDatabaseCleanupDeleted] =
   const databaseCleanupRunningRef = useRef(false)
 
 const databaseCleanupRequestRef = useRef(null)
+const handleMessageRef = useRef(null)
 
   // ==========================================================
   // FILES
@@ -297,6 +298,7 @@ const databaseCleanupRequestRef = useRef(null)
   const notifiedTransfersRef = useRef(new Set())
 
   const completedFilesRef = useRef(new Set())
+  const subscriptionsRef = useRef([])
 
   // ==========================================================
   // FILE AUTO SYNC REFS
@@ -1306,12 +1308,15 @@ const handleDatabaseCleanupPlan = useCallback(
   async message => {
     try {
       const payload = message?.payload || {}
+
       const requestId =
         message?.requestId ||
         payload?.requestId ||
         null
 
-      const remoteRows = payload?.remoteRows || {}
+      const remoteRows =
+        payload?.remoteRows || {}
+
       const cleanupRequest =
         databaseCleanupRequestRef.current
 
@@ -1319,23 +1324,27 @@ const handleDatabaseCleanupPlan = useCallback(
         console.warn(
           "USB DATABASE CLEANUP PLAN RECEIVED WITHOUT ACTIVE REQUEST"
         )
+
         return
       }
 
       if (
         cleanupRequest.requestId &&
         requestId &&
-        cleanupRequest.requestId !== requestId
+        cleanupRequest.requestId !==
+          requestId
       ) {
         console.warn(
           "USB DATABASE CLEANUP PLAN REQUEST ID MISMATCH",
           {
             localRequestId:
               cleanupRequest.requestId,
+
             remoteRequestId:
               requestId,
           }
         )
+
         return
       }
 
@@ -1346,7 +1355,9 @@ const handleDatabaseCleanupPlan = useCallback(
         )
 
       const commonCount =
-        Object.values(commonRows).reduce(
+        Object.values(
+          commonRows,
+        ).reduce(
           (sum, rows) =>
             sum +
             (Array.isArray(rows)
@@ -1356,34 +1367,103 @@ const handleDatabaseCleanupPlan = useCallback(
         )
 
       console.log("========================================")
+
       console.log(
         "USB DATABASE CLEANUP PLAN RECEIVED"
       )
+
       console.log({
         requestId,
+
         commonCount,
+
         commonRows,
       })
+
       console.log("========================================")
 
       databaseCleanupRequestRef.current = {
         ...cleanupRequest,
+
         requestId,
+
         remoteRows,
+
         commonRows,
+
         commonCount,
       }
 
-      // *مهم: نرسل COMMIT حتى لو commonCount = 0*
+      // =====================================================
+      // لا توجد سجلات مشتركة للحذف
+      // =====================================================
+
+      if (commonCount === 0) {
+        /*
+         * لا يوجد أي شيء مشترك بين الجهازين،
+         * وبالتالي لا توجد حاجة لإرسال COMMIT.
+         *
+         * ننهي Cleanup محليًا بالكامل.
+         */
+
+        console.log("========================================")
+
+        console.log(
+          "USB DATABASE CLEANUP FINISHED - NO COMMON ROWS"
+        )
+
+        console.log({
+          commonCount,
+
+          requestId,
+        })
+
+        console.log("========================================")
+
+        databaseCleanupRunningRef.current =
+          false
+
+        databaseCleanupRequestRef.current =
+          null
+
+        setDatabaseCleanupRunning(false)
+
+        setDatabaseCleanupDeleted({})
+
+        setDatabaseCleanupSuccess(true)
+
+        setUsbError("")
+
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setDatabaseCleanupSuccess(false)
+          }
+        }, 5000)
+
+        return
+      }
+
+      // =====================================================
+      // يوجد سجلات مشتركة
+      // =====================================================
+
       const success = send({
         type: "DATABASE_CLEANUP_COMMIT",
+
         version: 1,
+
         requestId,
+
         timestamp: Date.now(),
+
         payload: {
           requestId,
-          approvedRows: commonRows,
+
+          approvedRows:
+            commonRows,
+
           commonCount,
+
           transport: "usb",
         },
       })
@@ -1398,57 +1478,30 @@ const handleDatabaseCleanupPlan = useCallback(
         "USB DATABASE CLEANUP COMMIT SENT"
       )
 
-      // =====================================================
-      // لا يوجد أي سجل مشترك للحذف
-      // =====================================================
-      if (commonCount === 0) {
-        /*
-         * نوقف الـ Loading في الواجهة فورًا
-         * لأن لا يوجد شيء يحتاج إلى حذف.
-         *
-         * لكننا لا نلغي requestRef هنا،
-         * لأن Windows سيرسل DATABASE_CLEANUP_REMOTE_DONE
-         * بعد استلام COMMIT.
-         */
-
-        setDatabaseCleanupRunning(false)
-
-        setDatabaseCleanupDeleted({})
-
-        setDatabaseCleanupSuccess(true)
-
-        setUsbError("")
-
-        console.log("========================================")
-        console.log(
-          "USB DATABASE CLEANUP FINISHED - NO COMMON ROWS"
-        )
-        console.log({
-          commonCount,
-          requestId,
-        })
-        console.log("========================================")
-
-        setTimeout(() => {
-          if (mountedRef.current) {
-            setDatabaseCleanupSuccess(false)
-          }
-        }, 5000)
-
-        return
-      }
+      console.log("========================================")
 
       console.log(
         "USB DATABASE CLEANUP WAITING FOR REMOTE DONE"
       )
+
+      console.log({
+        requestId,
+
+        commonCount,
+      })
+
+      console.log("========================================")
     } catch (error) {
       console.error(
         "USB DATABASE CLEANUP PLAN ERROR:",
         error,
       )
 
-      databaseCleanupRunningRef.current = false
-      databaseCleanupRequestRef.current = null
+      databaseCleanupRunningRef.current =
+        false
+
+      databaseCleanupRequestRef.current =
+        null
 
       setDatabaseCleanupRunning(false)
 
@@ -1458,7 +1511,10 @@ const handleDatabaseCleanupPlan = useCallback(
       )
     }
   },
-  [buildCommonCleanupRows, send],
+  [
+    buildCommonCleanupRows,
+    send,
+  ],
 )
 const handleDatabaseCleanupRemoteDone =
   useCallback(
@@ -1474,6 +1530,30 @@ const handleDatabaseCleanupRemoteDone =
 
         const cleanupRequest =
           databaseCleanupRequestRef.current
+
+          if (
+  cleanupRequest?.noCommonRows === true &&
+  Number(
+    cleanupRequest?.commonCount || 0
+  ) === 0
+) {
+  console.log("========================================")
+  console.log(
+    "USB DATABASE CLEANUP REMOTE DONE - NO COMMON ROWS"
+  )
+  console.log({
+    requestId,
+  })
+  console.log("========================================")
+
+  databaseCleanupRunningRef.current =
+    false
+
+  databaseCleanupRequestRef.current =
+    null
+
+  return
+}
 
         if (!cleanupRequest) {
           /*
@@ -3956,6 +4036,10 @@ handleDatabaseCleanupRemoteDone,
     ],
   )
 
+  useEffect(() => {
+  handleMessageRef.current = handleMessage
+}, [handleMessage])
+
   // ==========================================================
   // HANDLE CONNECTION STATE
   // ==========================================================
@@ -4404,70 +4488,46 @@ setDatabaseCleanupRunning(false)
   }, [send])
 
   // ==========================================================
-  // INITIALIZE LISTENERS
-  // ==========================================================
+// INITIALIZE LISTENERS
+// ==========================================================
 
-  useEffect(() => {
-  mountedRef.current = true
-
+useEffect(() => {
   let active = true
-
-  let messageSubscription = null
-
-  let stateSubscription = null
-
-  let errorSubscription = null
-
-  let fileProgressSubscription = null
-
-  let fileCompletedSubscription = null
-
-  let fileErrorSubscription = null
 
   let connectTimer = null
 
-  const cleanupSubscriptions = () => {
-    try {
-      messageSubscription?.remove?.()
-    } catch (_) {}
-
-    try {
-      stateSubscription?.remove?.()
-    } catch (_) {}
-
-    try {
-      errorSubscription?.remove?.()
-    } catch (_) {}
-
-    try {
-      fileProgressSubscription?.remove?.()
-    } catch (_) {}
-
-    try {
-      fileCompletedSubscription?.remove?.()
-    } catch (_) {}
-
-    try {
-      fileErrorSubscription?.remove?.()
-    } catch (_) {}
-
-    messageSubscription = null
-
-    stateSubscription = null
-
-    errorSubscription = null
-
-    fileProgressSubscription = null
-
-    fileCompletedSubscription = null
-
-    fileErrorSubscription = null
-
-    if (connectTimer) {
-      clearTimeout(connectTimer)
-
-      connectTimer = null
+  const removeSubscriptions = () => {
+    for (const subscription of subscriptionsRef.current) {
+      try {
+        subscription?.remove?.()
+      } catch (_) {}
     }
+
+    subscriptionsRef.current = []
+  }
+
+  /*
+   * مهم جدًا:
+   * أي listeners قديمة يتم حذفها قبل إنشاء listeners جديدة.
+   */
+  removeSubscriptions()
+
+  const addSubscription = subscription => {
+    if (!subscription) {
+      return
+    }
+
+    if (!active) {
+      try {
+        subscription?.remove?.()
+      } catch (_) {}
+
+      return
+    }
+
+    subscriptionsRef.current.push(
+      subscription,
+    )
   }
 
   const initialize = async () => {
@@ -4506,76 +4566,71 @@ setDatabaseCleanupRunning(false)
         return
       }
 
-      /*
-       * ========================================================
-       * ON MESSAGE
-       * ========================================================
-       */
+      // ======================================================
+      // MESSAGE
+      // ======================================================
 
-      messageSubscription = AvocatoFlow.addListener(
-        "onMessage",
-        event => {
-          if (!active) {
-            return
-          }
+      const messageSubscription =
+        AvocatoFlow.addListener(
+          "onMessage",
+          event => {
+      if (
+        handleMessageRef.current
+      ) {
+        handleMessageRef.current(event)
+      }
+    },
+        )
 
-          handleMessage(event)
-        },
+      addSubscription(
+        messageSubscription,
       )
 
-      /*
-       * ========================================================
-       * CONNECTION STATE
-       * ========================================================
-       */
+      // ======================================================
+      // CONNECTION STATE
+      // ======================================================
 
       if (!active) {
         return
       }
 
-      stateSubscription = AvocatoFlow.addListener(
-        "onConnectionStateChanged",
-        event => {
-          if (!active) {
-            return
-          }
+      const stateSubscription =
+        AvocatoFlow.addListener(
+          "onConnectionStateChanged",
+          handleConnectionState,
+        )
 
-          handleConnectionState(event)
-        },
+      addSubscription(
+        stateSubscription,
       )
 
-      /*
-       * ========================================================
-       * CONNECTION ERROR
-       * ========================================================
-       */
+      // ======================================================
+      // CONNECTION ERROR
+      // ======================================================
 
       if (!active) {
         return
       }
 
-      errorSubscription = AvocatoFlow.addListener(
-        "onConnectionError",
-        event => {
-          if (!active) {
-            return
-          }
+      const errorSubscription =
+        AvocatoFlow.addListener(
+          "onConnectionError",
+          handleConnectionError,
+        )
 
-          handleConnectionError(event)
-        },
+      addSubscription(
+        errorSubscription,
       )
 
-      /*
-       * ========================================================
-       * FILE PROGRESS
-       * ========================================================
-       */
+      // ======================================================
+      // FILE PROGRESS
+      // ======================================================
 
       if (!active) {
         return
       }
 
-      fileProgressSubscription =
+      const fileProgressSubscription =
         AvocatoFlow.addListener(
           "onFileProgress",
           event => {
@@ -4671,17 +4726,19 @@ setDatabaseCleanupRunning(false)
           },
         )
 
-      /*
-       * ========================================================
-       * FILE COMPLETED
-       * ========================================================
-       */
+      addSubscription(
+        fileProgressSubscription,
+      )
+
+      // ======================================================
+      // FILE COMPLETED
+      // ======================================================
 
       if (!active) {
         return
       }
 
-      fileCompletedSubscription =
+      const fileCompletedSubscription =
         AvocatoFlow.addListener(
           "onFileCompleted",
           event => {
@@ -4767,17 +4824,19 @@ setDatabaseCleanupRunning(false)
           },
         )
 
-      /*
-       * ========================================================
-       * FILE ERROR
-       * ========================================================
-       */
+      addSubscription(
+        fileCompletedSubscription,
+      )
+
+      // ======================================================
+      // FILE ERROR
+      // ======================================================
 
       if (!active) {
         return
       }
 
-      fileErrorSubscription =
+      const fileErrorSubscription =
         AvocatoFlow.addListener(
           "onFileError",
           event => {
@@ -4824,11 +4883,13 @@ setDatabaseCleanupRunning(false)
           },
         )
 
-      /*
-       * ========================================================
-       * INITIALIZED
-       * ========================================================
-       */
+      addSubscription(
+        fileErrorSubscription,
+      )
+
+      // ======================================================
+      // INITIALIZED
+      // ======================================================
 
       console.log(
         "USB SCREEN INITIALIZED:",
@@ -4839,11 +4900,6 @@ setDatabaseCleanupRunning(false)
             Boolean(trustedPc),
         },
       )
-
-      /*
-       * لا نستخدم setTimeout قبل التأكد
-       * أن الـ effect ما زال فعالًا.
-       */
 
       if (!active) {
         return
@@ -4883,9 +4939,16 @@ setDatabaseCleanupRunning(false)
   return () => {
     active = false
 
-    mountedRef.current = false
+    if (connectTimer) {
+      clearTimeout(connectTimer)
 
-    cleanupSubscriptions()
+      connectTimer = null
+    }
+
+    /*
+     * حذف كل listeners الحالية مباشرة.
+     */
+    removeSubscriptions()
   }
 }, [
   connectUsb,
@@ -4893,7 +4956,7 @@ setDatabaseCleanupRunning(false)
   handleConnectionError,
   handleConnectionState,
   handleIncomingFileError,
-  handleMessage,
+  // handleMessage,
   loadDeviceId,
   loadTrustedUsb,
   markTransferCompleted,
@@ -5605,7 +5668,7 @@ databaseCleanupRequestRef.current =
   <View>
     
     <Pressable
-      style={styles.cleanupButton}
+      style={styles.primaryButton}
       onPress={startDatabaseCleanup}
       disabled={
         databaseCleanupRunning ||
@@ -5632,7 +5695,7 @@ databaseCleanupRequestRef.current =
       >
         {databaseCleanupRunning
           ? "جاري تنظيف قاعدة البيانات..."
-          : "تنظيف نهائي"}
+          : "تنظيف قاعدة البيانات"}
       </Text>
     </Pressable>
   </View>

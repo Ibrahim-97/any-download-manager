@@ -223,8 +223,7 @@ export default function UsbSyncScreen() {
   const [databaseProgress, setDatabaseProgress] = useState(0)
 
   const [databaseSyncSuccess, setDatabaseSyncSuccess] = useState(false)
-  const [caseFilesSyncSuccess,setCaseFilesSyncSuccess] = useState(false)
-  
+  const [caseFilesSyncSuccess, setCaseFilesSyncSuccess] = useState(false)
 
   // ==========================================================
   // FILES
@@ -2458,39 +2457,35 @@ export default function UsbSyncScreen() {
         return
       }
 
-      
-if (type === "CASE_FILES_SYNC_COMPLETE") {
-  const payload = message?.payload || {}
+      if (type === "CASE_FILES_SYNC_COMPLETE") {
+        const payload = message?.payload || {}
 
-  console.log("========================================")
-  console.log("USB CASE FILES SYNC COMPLETE:", payload)
-  console.log("========================================")
+        console.log("========================================")
+        console.log("USB CASE FILES SYNC COMPLETE:", payload)
+        console.log("========================================")
 
-  caseFilesSyncRunningRef.current = false
-  caseFilesSyncRequestRef.current = null
+        caseFilesSyncRunningRef.current = false
+        caseFilesSyncRequestRef.current = null
 
-  if (payload?.success === false) {
-    setUsbError(
-      payload?.error ||
-        payload?.message ||
-        "فشلت مزامنة ملفات القضايا.",
-    )
+        if (payload?.success === false) {
+          setUsbError(
+            payload?.error || payload?.message || "فشلت مزامنة ملفات القضايا.",
+          )
 
-    return
-  }
+          return
+        }
 
-  setCaseFilesSyncSuccess(true)
-  setUsbError("")
+        setCaseFilesSyncSuccess(true)
+        setUsbError("")
 
-  setTimeout(() => {
-    if (mountedRef.current) {
-      setCaseFilesSyncSuccess(false)
-    }
-  }, 4000)
+        setTimeout(() => {
+          if (mountedRef.current) {
+            setCaseFilesSyncSuccess(false)
+          }
+        }, 4000)
 
-  return
-}
-
+        return
+      }
 
       // ======================================================
       // PAIR_CODE
@@ -4448,14 +4443,15 @@ if (type === "CASE_FILES_SYNC_COMPLETE") {
               </Text>
             </Pressable>
           ) : (
-            <View style={{
-    flexDirection: "row",
+            <View
+              style={{
+                flexDirection: "row",
 
-    alignItems: "center",
+                alignItems: "center",
 
-    gap: 8,
-  }}>
-             
+                gap: 8,
+              }}
+            >
               {trusted ? (
                 <Pressable
                   style={styles.unpairButton}
@@ -4470,12 +4466,17 @@ if (type === "CASE_FILES_SYNC_COMPLETE") {
 
                   <Text style={styles.unpairText}>إلغاء الاقتران</Text>
                 </Pressable>
-              ) : (<Pressable style={styles.primaryButton}  onPress={sendPairRequest} >
-                <MaterialIcons name="link" size={22} color="#fff" />
+              ) : (
+                <Pressable
+                  style={styles.primaryButton}
+                  onPress={sendPairRequest}
+                >
+                  <MaterialIcons name="link" size={22} color="#fff" />
 
-                <Text style={styles.primaryButtonText}>طلب الاقتران</Text>
-              </Pressable>)}
-               <Pressable
+                  <Text style={styles.primaryButtonText}>طلب الاقتران</Text>
+                </Pressable>
+              )}
+              <Pressable
                 style={styles.disconnectButton}
                 onPress={disconnectUsb}
               >
@@ -4492,7 +4493,7 @@ if (type === "CASE_FILES_SYNC_COMPLETE") {
         {/* ================================================== */}
 
         {usbConnected && !trusted ? (
-          <View >
+          <View>
             {/* <Text style={styles.cardTitle}>الاقتران</Text>
 
             <Text style={styles.description}>
@@ -4529,7 +4530,7 @@ if (type === "CASE_FILES_SYNC_COMPLETE") {
                   <Text style={styles.primaryButtonText}>تأكيد الاقتران</Text>
                 </Pressable>
               </View>
-            ) }
+            )}
           </View>
         ) : null}
 
@@ -4546,21 +4547,16 @@ if (type === "CASE_FILES_SYNC_COMPLETE") {
             </Text>
           </View>
         ) : null}
-      
-{caseFilesSyncSuccess ? (
-  <View style={styles.successBox}>
-    <MaterialIcons
-      name="check-circle"
-      size={24}
-      color="#16a34a"
-    />
 
-    <Text style={styles.successText}>
-      تمت مزامنة ملفات القضايا بنجاح
-    </Text>
-  </View>
-) : null}
+        {caseFilesSyncSuccess ? (
+          <View style={styles.successBox}>
+            <MaterialIcons name="check-circle" size={24} color="#16a34a" />
 
+            <Text style={styles.successText}>
+              تمت مزامنة ملفات القضايا بنجاح
+            </Text>
+          </View>
+        ) : null}
 
         {/* ================================================== */}
         {/* FILES */}
